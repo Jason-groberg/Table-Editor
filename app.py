@@ -2,10 +2,54 @@ import streamlit as st
 import pandas as pd
 from data_processor import process_data
 
+import os
+
 st.set_page_config(page_title="HubSpot Table Editor", layout="wide")
 
+# Get the password from secrets
+try:
+    CORRECT_PASSWORD = st.secrets["app"]["password"]
+except (FileNotFoundError, KeyError):
+    # Fallback for local testing if not set
+    CORRECT_PASSWORD = "harrissa-access"
+
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    # 1. Check if already authenticated in this session
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # 2. Check if the password was passed in the URL (so she can bookmark it)
+    if st.query_params.get("pwd") == CORRECT_PASSWORD:
+        st.session_state["password_correct"] = True
+        return True
+
+    # 3. Otherwise, show a password input box
+    st.title("🔒 Login Required")
+    st.write("Please enter the password to access the automation.")
+    
+    password = st.text_input("Password", type="password")
+    
+    if password:
+        if password == CORRECT_PASSWORD:
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.error("😕 Password incorrect")
+            
+    # Show instructions for bookmarking
+    st.info("💡 **Tip for Harrissa:** Once you log in, I will give you a special 'Magic Link'. If you bookmark that link, you will never have to type the password again!")
+    return False
+
+if not check_password():
+    st.stop()  # Stop the app from running the rest of the code until authenticated
+
+# --- MAIN APP LOGIC BELOW ---
 st.title("HubSpot Table Editor")
 st.write("Upload a CSV or Excel file containing your leads to process them for HubSpot.")
+
+# Provide the magic link for her to bookmark
+st.success(f"✅ Logged in! **[Click here and bookmark this link](/?pwd={CORRECT_PASSWORD})** to never have to type the password again.")
 
 uploaded_files = st.file_uploader("Choose CSV or Excel files", type=["csv", "xlsx"], accept_multiple_files=True)
 
