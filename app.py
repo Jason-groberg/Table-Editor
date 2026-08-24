@@ -37,8 +37,6 @@ def check_password():
         else:
             st.error("😕 Password incorrect")
             
-    # Show instructions for bookmarking
-    st.info("💡 **Tip for Harrissa:** Once you log in, I will give you a special 'Magic Link'. If you bookmark that link, you will never have to type the password again!")
     return False
 
 if not check_password():
