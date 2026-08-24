@@ -10,8 +10,8 @@ st.set_page_config(page_title="HubSpot Table Editor", layout="wide")
 try:
     CORRECT_PASSWORD = st.secrets["app"]["password"]
 except (FileNotFoundError, KeyError):
-    # Fallback for local testing if not set
-    CORRECT_PASSWORD = "harrissa-access"
+    st.error("🚨 Configuration Error: The app password is not set in the Streamlit Cloud Secrets!")
+    st.stop()
 
 def check_password():
     """Returns `True` if the user had the correct password."""
