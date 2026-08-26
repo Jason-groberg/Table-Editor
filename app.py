@@ -46,8 +46,9 @@ if not check_password():
 st.title("HubSpot Table Editor")
 st.write("Upload a CSV or Excel file containing your leads to process them for HubSpot.")
 
-# Provide the magic link for her to bookmark
-st.success(f"✅ Logged in! **[Click here and bookmark this link](/?pwd={CORRECT_PASSWORD})** to never have to type the password again.")
+# Only show the bookmark link if they haven't already used it
+if st.query_params.get("pwd") != CORRECT_PASSWORD:
+    st.success(f"✅ Logged in! **[Click here and bookmark this link](/?pwd={CORRECT_PASSWORD})** to never have to type the password again.")
 
 uploaded_files = st.file_uploader("Choose CSV or Excel files", type=["csv", "xlsx"], accept_multiple_files=True)
 
