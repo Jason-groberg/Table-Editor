@@ -10,7 +10,7 @@ st.set_page_config(page_title="HubSpot Table Editor", layout="wide")
 try:
     CORRECT_PASSWORD = st.secrets["app"]["password"]
 except (FileNotFoundError, KeyError):
-    st.error("🚨 Configuration Error: The app password is not set in the Streamlit Cloud Secrets!")
+    st.error(" Configuration Error: The app password is not set in the Streamlit Cloud Secrets!")
     st.stop()
 
 def check_password():
@@ -25,7 +25,7 @@ def check_password():
         return True
 
     # 3. Otherwise, show a password input box
-    st.title("🔒 Login Required")
+    st.title("Login Required")
     st.write("Please enter the password to access the automation.")
     
     password = st.text_input("Password", type="password")
@@ -35,7 +35,7 @@ def check_password():
             st.session_state["password_correct"] = True
             st.rerun()
         else:
-            st.error("😕 Password incorrect")
+            st.error("Password incorrect")
             
     return False
 
@@ -48,7 +48,7 @@ st.write("Upload a CSV or Excel file containing your leads to process them for H
 
 # Only show the bookmark link if they haven't already used it
 if st.query_params.get("pwd") != CORRECT_PASSWORD:
-    st.success(f"✅ Logged in! **[Click here and bookmark this link](/?pwd={CORRECT_PASSWORD})** to never have to type the password again.")
+    st.success(f"Logged in! **[Click here and bookmark this link](/?pwd={CORRECT_PASSWORD})** to never have to type the password again.")
 
 uploaded_files = st.file_uploader("Choose CSV or Excel files", type=["csv", "xlsx"], accept_multiple_files=True)
 

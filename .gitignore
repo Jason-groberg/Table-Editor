@@ -3,3 +3,7 @@ __pycache__/
 .streamlit/secrets.toml
 .idea/
 test_tables/
+*.csv
+*.xlsx
+.env
+.DS_Store
