@@ -34,15 +34,15 @@ test('business lookup rejects unauthenticated access and cross-origin requests',
 test('misconfigured auth fails closed',async()=>{
   const old=process.env.SESSION_SECRET;delete process.env.SESSION_SECRET;assert.equal((await session(request())).status,503);process.env.SESSION_SECRET=old;
 });
-test('lookup returns review candidates, honors the input state, and hides upstream errors',async()=>{
+test('lookup returns review candidates, restricts results to Arizona, and hides upstream errors',async()=>{
   const originalFetch=globalThis.fetch;const originalKey=process.env.GOOGLE_API_KEY;process.env.GOOGLE_API_KEY='test-only-key';
   try{
     globalThis.fetch=async(url,options)=>{
-      assert.equal(url,'https://places.googleapis.com/v1/places:searchText');assert.equal(JSON.parse(options.body).textQuery,'Acme Denver CO');
-      return new Response(JSON.stringify({places:[{displayName:{text:'Acme'},websiteUri:'https://www.example.com/about',nationalPhoneNumber:'555-0100',addressComponents:[{types:['locality'],longText:'Denver'},{types:['administrative_area_level_1'],shortText:'CO'}]}]}),{status:200});
+      assert.equal(url,'https://places.googleapis.com/v1/places:searchText');assert.equal(JSON.parse(options.body).textQuery,'Acme Phoenix Arizona');
+      return new Response(JSON.stringify({places:[{displayName:{text:'Acme'},websiteUri:'https://www.example.com/about',nationalPhoneNumber:'555-0100',addressComponents:[{types:['locality'],longText:'Phoenix'},{types:['administrative_area_level_1'],shortText:'AZ'}]}]}),{status:200});
     };
-    const response=await lookup(request('POST',{company:'Acme',city:'Denver',state:'CO'},undefined,issueSession()));
-    assert.equal(response.status,200);const data=await response.json();assert.equal(data.candidates[0].values.State,'CO');assert.equal(data.candidates[0].values['Company domain'],'example.com');
+    const response=await lookup(request('POST',{company:'Acme',city:'Phoenix',state:'AZ'},undefined,issueSession()));
+    assert.equal(response.status,200);const data=await response.json();assert.equal(data.candidates[0].values.State,'AZ');assert.equal(data.candidates[0].values['Company domain'],'example.com');
     globalThis.fetch=async()=>{throw new Error('secret upstream detail');};
     const error=await lookup(request('POST',{company:'Acme'},undefined,issueSession()));assert.equal(error.status,502);assert.ok(!(await error.text()).includes('secret upstream detail'));
   }finally{globalThis.fetch=originalFetch;if(originalKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=originalKey;}
@@ -73,4 +73,16 @@ test('upgrades valid legacy sessions but rejects expired legacy sessions',async(
   const expired=await session(request('GET',null,undefined,legacy(Date.now()-1)));
   assert.equal((await expired.json()).authenticated,false);
   assert.equal(expired.headers.get('set-cookie'),null);
+});
+test('domain search uses the address, makes one Google call, and removes non-Arizona candidates',async()=>{
+  const oldFetch=globalThis.fetch;const oldKey=process.env.GOOGLE_API_KEY;process.env.GOOGLE_API_KEY='test-only-key';let calls=0;
+  try {
+    globalThis.fetch=async(url,options)=>{
+      calls++;assert.equal(JSON.parse(options.body).textQuery,'acme.example 123 Main St Arizona');
+      const place=state=>({displayName:{text:'Acme'},websiteUri:'https://acme.example',addressComponents:[{types:['administrative_area_level_1'],shortText:state}]});
+      return new Response(JSON.stringify({places:[place('CO'),place('AZ')]}),{status:200});
+    };
+    const response=await lookup(request('POST',{domain:'acme.example',address:'123 Main St'},undefined,issueSession()));
+    assert.equal(response.status,200);const data=await response.json();assert.equal(calls,1);assert.equal(data.candidates.length,1);assert.equal(data.candidates[0].values.State,'AZ');
+  } finally {globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=oldKey;}
 });

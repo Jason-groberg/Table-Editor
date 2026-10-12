@@ -16,6 +16,15 @@ const aliases = {
 };
 export const text = value => value == null ? '' : String(value).trim();
 export const normalizeHeader = value => text(value).toLowerCase().replace(/[.’']/g, '').replace(/[\s_-]+/g, ' ');
+export function normalizeDate(value) {
+  const raw = text(value);
+  const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return raw;
+  const [,month,day,year] = match;
+  const iso = `${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`;
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === iso ? iso : raw;
+}
 export function mapHeader(header) {
   const normalized = normalizeHeader(header);
   return Object.entries(aliases).find(([, names]) => names.includes(normalized))?.[0] || '';
@@ -58,6 +67,7 @@ export function normalizeTable(table, mapping, source) {
     values['First name'] ||= first;
     values['last name'] ||= last.join(' ');
     values['is doorpull'] = 'true';
+    values['Date of last door pull'] = normalizeDate(values['Date of last door pull']);
     if (domain(values['Company domain'])) values['Company domain'] = domain(values['Company domain']);
     return [{ values, source: `${source}, row ${index + 2}`, conflicts }];
   });

@@ -1,29 +1,33 @@
-import { domain, text } from './processor.js';
-export const BUSINESS_FIELDS = ['Company domain','phone','address','city','State','zip'];
+import { COLUMNS, domain, text } from './processor.js';
+import { searchDomain, isArizona } from './business-search.js';
+export const BUSINESS_FIELDS = ['company name','Company domain','phone','address','city','State','zip'];
 const normalized = value => text(value).toLowerCase().replace(/[^a-z0-9]/g,'');
 const companyKey = value => normalized(text(value).replace(/\b(incorporated|corporation|limited|inc|corp|llc|ltd)\.?$/i,''));
 export function lookupInput(row) {
-  return {company:row.values['company name'],address:row.values.address,city:row.values.city,state:row.values.State,zip:row.values.zip};
+  return {company:row.values['company name'],domain:searchDomain(row.values),address:row.values.address,city:row.values.city,state:'AZ',zip:row.values.zip};
 }
 export function selectMatch(row, candidates) {
+  const preferredDomain = searchDomain(row.values);
   const matches = candidates.filter(candidate => {
-    if (!companyKey(row.values['company name']) || companyKey(candidate.name)!==companyKey(row.values['company name'])) return false;
-    let confirmed = false;
-    for (const key of ['address','city','State','zip','Company domain']) {
+    if (!isArizona(candidate)) return false;
+    if (preferredDomain) {
+      if (domain(candidate.values['Company domain']) !== preferredDomain) return false;
+    } else if (!companyKey(row.values['company name']) || companyKey(candidate.name)!==companyKey(row.values['company name'])) return false;
+    // An exact business/domain match must also agree with any supplied location.
+    for (const key of ['address','city','State','zip']) {
       if (!text(row.values[key])) continue;
-      const a = key==='Company domain'?domain(row.values[key]):normalized(row.values[key]);
-      const b = key==='Company domain'?domain(candidate.values[key]):normalized(candidate.values[key]);
+      const a = key==='State' && normalized(row.values[key])==='arizona'?'az':normalized(row.values[key]);
+      const b = key==='State' && normalized(candidate.values[key])==='arizona'?'az':normalized(candidate.values[key]);
       if (!b || a!==b) return false;
-      if (key!=='State') confirmed=true;
     }
-    return confirmed;
+    return true;
   });
   return matches.length===1?matches[0]:null;
 }
 export function fillMissing(row, candidate) {
   let count=0;
   for (const field of BUSINESS_FIELDS) {
-    if (!text(row.values[field]) && text(candidate.values[field])) {row.values[field]=text(candidate.values[field]);count++;}
+    if (!text(row.values[field]) && text(field==='company name'?candidate.name:candidate.values[field])) {row.values[field]=text(field==='company name'?candidate.name:candidate.values[field]);count++;}
   }
   return count;
 }
@@ -42,8 +46,8 @@ export async function enrichRows(rows, lookup, {signal,onProgress=()=>{},wait=de
   const summary={processed:0,filled:0,matched:0,review:0,failed:0};
   for(const row of rows){
     if(signal?.aborted)break;
-    if(!BUSINESS_FIELDS.some(field=>!text(row.values[field]))){row.enrichment={status:'complete',message:'Business details already supplied.'};}
-    else if(!text(row.values['company name'])){row.enrichment={status:'review',message:'No company name for business lookup; missing values left blank.'};summary.review++;}
+    if(!COLUMNS.some(field=>!text(row.values[field]))){row.enrichment={status:'complete',message:'All information already supplied.'};}
+    else if(!text(row.values['company name']) && !searchDomain(row.values)){row.enrichment={status:'review',message:'No business name or custom domain for business lookup; missing values left blank.'};summary.review++;}
     else {
       try {
         if(unavailable)throw new Error(unavailable);

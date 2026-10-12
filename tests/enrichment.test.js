@@ -6,10 +6,10 @@ const makeRows=(table)=>normalizeTable(table,table[0].map(mapHeader),'test');
 const match=(name='Acme LLC',city='Phoenix')=>({name,maps:'https://www.google.com/maps/place/example',attributions:[],values:{city,State:'AZ',zip:'85001',address:'123 Main St','Company domain':'acme.example',phone:'602-555-0100'}});
 const run=(rows,lookup,options={})=>enrichRows(rows,lookup,{wait:async()=>{},interval:0,...options});
 test('combine enrichment fills missing business fields and exports exact schema without changing source values',async()=>{
-  const rows=makeRows([['company','city','phone','email'],['Acme','Phoenix','602-555-9999','person@example.com']]);
+  const rows=makeRows([['company','city','phone','email'],['Acme','Phoenix','602-555-9999','person@acme.example']]);
   const result=await run(rows,async()=>({candidates:[match()]}));
   assert.equal(result.matched,1);assert.equal(result.filled,4);
-  assert.equal(rows[0].values.phone,'602-555-9999');assert.equal(rows[0].values.email,'person@example.com');
+  assert.equal(rows[0].values.phone,'602-555-9999');assert.equal(rows[0].values.email,'person@acme.example');
   const csv=parseCSV(exportCSV(rows));assert.deepEqual(csv[0],COLUMNS);assert.equal(csv[1][COLUMNS.indexOf('zip')],'85001');assert.equal(csv[1][12],'true');
 });
 test('ambiguous candidates and contradictory locations remain blank and exportable',async()=>{
@@ -17,7 +17,7 @@ test('ambiguous candidates and contradictory locations remain blank and exportab
     const rows=makeRows([['company','city'],['Acme','Phoenix']]);await run(rows,async()=>({candidates}));
     assert.equal(rows[0].values.phone,'');assert.equal(rows[0].enrichment.status,'review');assert.ok(exportCSV(rows));
   }
-  const [noLocation]=makeRows([['company'],['Acme']]);assert.equal(selectMatch(noLocation,[match()]),null);
+  const [noLocation]=makeRows([['company'],['Acme']]);assert.equal(selectMatch(noLocation,[match()]).name,'Acme LLC');
 });
 test('same company and location use one request but each row is enriched',async()=>{
   const rows=makeRows([['company','city'],['Acme','Phoenix'],['Acme','Phoenix']]);let calls=0;
@@ -46,8 +46,32 @@ test('rate limits retry once; cancellation prevents late results from changing r
   const result=await run(cancelled,async()=>{controller.abort();return {candidates:[match()]};},{signal:controller.signal});
   assert.equal(result.cancelled,true);assert.equal(cancelled[0].values.phone,'');
 });
-test('does not call API for complete rows or missing company names',async()=>{
-  const rows=makeRows([COLUMNS,COLUMNS.map(key=>({'company name':'Acme',...match().values,'is doorpull':'true'}[key] || ''))]);
-  rows.push(...makeRows([['email'],['a@example.com']]));let calls=0;
+test('does not call API for complete rows or rows without a business identifier',async()=>{
+  const rows=makeRows([COLUMNS,COLUMNS.map(key=>({'company name':'Acme',...match().values,'is doorpull':'true'}[key] || 'supplied'))]);
+  rows.push(...makeRows([['email'],['a@gmail.com']]));let calls=0;
   await run(rows,async()=>{calls++;return {candidates:[]};});assert.equal(calls,0);assert.equal(rows[1].values['company name'],'');
+});
+test('custom email domain takes precedence over supplied domain and name',async()=>{
+  const rows=makeRows([['company','email','domain','address'],['Other Name','owner@acme.example','other.example','123 Main St']]);let calls=0;
+  await run(rows,async input=>{calls++;assert.equal(input.domain,'acme.example');assert.equal(input.address,'123 Main St');return {candidates:[match()]};});
+  assert.equal(calls,1);assert.equal(rows[0].values.phone,'602-555-0100');assert.equal(rows[0].values['Company domain'],'other.example');
+});
+test('domain-only rows can find a business and fill its missing name',async()=>{
+  const rows=makeRows([['email'],['owner@acme.example']]);let calls=0;
+  await run(rows,async input=>{calls++;assert.equal(input.domain,'acme.example');return {candidates:[match()]};});
+  assert.equal(calls,1);assert.equal(rows[0].values['company name'],'Acme LLC');assert.equal(rows[0].values['Company domain'],'acme.example');
+});
+test('missing domain alone triggers one lookup; missing email alone also triggers one lookup',async()=>{
+  for(const missing of ['Company domain','email']){
+    const values={'company name':'Acme',...match().values,'is doorpull':'true',email:'owner@gmail.com'};
+    const rows=makeRows([COLUMNS,COLUMNS.map(key=>key===missing?'':values[key] || 'supplied')]);let calls=0;
+    await run(rows,async()=>{calls++;return {candidates:[match()]};});assert.equal(calls,1);
+    if(missing==='Company domain')assert.equal(rows[0].values[missing],'acme.example');else assert.equal(rows[0].values.email,'');
+  }
+});
+test('name-only queries fill unique Arizona matches but reject out-of-state or ambiguous matches',async()=>{
+  const rows=makeRows([['company'],['Acme']]);await run(rows,async()=>({candidates:[match()]}));assert.equal(rows[0].values.phone,'602-555-0100');
+  const [row]=makeRows([['company'],['Acme']]);
+  assert.equal(selectMatch(row,[{...match(),values:{...match().values,State:'CO'}}]),null);
+  assert.equal(selectMatch(row,[match(),match()]),null);
 });

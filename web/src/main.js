@@ -140,12 +140,12 @@ function renderRows(){
   }table.append(body);
 }
 async function lookupRow(row){
-  if(busy || enrichmentController)return;if(!row.values['company name']){message('Enter a company name before searching.');return;}
+  if(busy || enrichmentController)return;if(!lookupInput(row).company && !lookupInput(row).domain){message('Enter a business name or custom business domain before searching.');return;}
   busy=true;const current=generation;const snapshot=JSON.stringify(row.values);renderRows();message('Looking up business details…');$('suggestions').hidden=true;
   try {
     const data=await api('lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lookupInput(row))});
     if(!signedIn || generation!==current || !rows.includes(row))return;
-    const panel=$('suggestions');panel.replaceChildren(element('h2',`Business matches for ${row.values['company name']}`),element('p','Check the business and location carefully. Accepting a match fills empty fields only. The phone is a business number, not a verified personal contact number.'));
+    const panel=$('suggestions');panel.replaceChildren(element('h2',`Business matches for ${row.values['company name'] || lookupInput(row).domain}`),element('p','Check the business and location carefully. Accepting a match fills empty fields only. The phone is a business number, not a verified personal contact number.'));
     for(const candidate of data.candidates){
       const card=element('div',undefined,'candidate');card.append(element('strong',candidate.name),element('p',candidate.address));
       for(const [key,value] of Object.entries(candidate.values))if(value)card.append(element('p',`${key}: ${value}`));

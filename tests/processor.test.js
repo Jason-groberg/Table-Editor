@@ -55,3 +55,10 @@ test('rejects formulas and data beyond CSV headers',async()=>{
   await assert.rejects(readFile('leads.xlsx',await book.xlsx.writeBuffer()),/Formula/);
   await assert.rejects(readFile('leads.csv',Buffer.from('company\nAcme,hidden\n')),/beyond/);
 });
+test('converts US CSV dates without silently repairing invalid dates',()=>{
+  const rows=process([['company','date added'],['Acme','8/18/2026'],['Other','2/30/2026'],['Third','2026-10-12']]);
+  assert.equal(rows[0].values['Date of last door pull'],'2026-08-18');
+  assert.equal(rows[1].values['Date of last door pull'],'2/30/2026');
+  assert.equal(rows[2].values['Date of last door pull'],'2026-10-12');
+  assert.equal(validateRows(rows)[0].errors.length,0);assert.ok(validateRows(rows)[1].errors.length);
+});
