@@ -18,7 +18,12 @@ export default async function handler(request) {
         'X-Goog-FieldMask':'places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.addressComponents,places.googleMapsUri,places.attributions'},
       body:JSON.stringify({textQuery:buildSearchQuery(body),pageSize:3}),
     });
-    if (!result.ok) return json({error:'Business lookup is unavailable. Check the API configuration or try again later.'},502);
+    if (!result.ok) {
+      // Report Google's safe status code, not request URLs or raw messages.
+      let status='';
+      try {const failure=await result.json();if(/^[A-Z_]+$/.test(failure.error?.status || ''))status=` ${failure.error.status}`;} catch {}
+      return json({error:`Google Places rejected the lookup (${result.status}${status}). Check Places API (New), key restrictions, billing, or quota.`},502);
+    }
     const data = await result.json();
     return json({candidates:(data.places || []).slice(0,3).map(place=> {
       const part = (type, short=false) => {const c = place.addressComponents?.find(c=>c.types?.includes(type)); return c?.[short?'shortText':'longText'] || '';};

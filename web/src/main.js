@@ -139,6 +139,7 @@ function renderRows(){
     const row=rows[index];const tr=element('tr');const meta=element('td');meta.append(element('strong',`Row ${index+1}`),element('div',row.source,'source'));
     const issues=element('div',undefined,'issues');
     const showIssues=()=>{const v=validateRows(rows)[index];issues.textContent=[...v.errors.map(e=>e.message),...(v.duplicate?[`Possible duplicate of row ${v.duplicate}. Review before export.`]:[])].join(' · ');};showIssues();meta.append(issues);
+    if(row.domainSource)meta.append(element('div',row.domainSource,'source'));
     if(row.enrichment){
       meta.append(element('div',row.enrichment.message,'source'));
       const match=row.enrichment.candidate;

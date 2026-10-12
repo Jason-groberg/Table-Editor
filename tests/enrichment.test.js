@@ -110,3 +110,28 @@ test('different supplied names share a request when the preferred domain produce
   const result=await run(rows,async()=>{calls++;return {candidates:[match()]};});
   assert.equal(calls,1);assert.equal(result.matched,2);
 });
+test('copies custom email domain even when Google returns nothing or fails',async()=>{
+  for(const lookup of [async()=>({candidates:[]}),async()=>{throw Object.assign(new Error('Unavailable'),{status:502});}]){
+    const rows=makeRows([['company','email'],['Acme','person@acme.example']]);
+    await run(rows,lookup);assert.equal(rows[0].values['Company domain'],'acme.example');assert.equal(rows[0].values.phone,'');assert.ok(rows[0].domainSource);
+  }
+  const rows=makeRows([['company','email','domain'],['Acme','a@acme.example','supplied.example']]);
+  await run(rows,async()=>({candidates:[]}));assert.equal(rows[0].values['Company domain'],'supplied.example');
+});
+test('matches street abbreviations and source units without accepting a different building',()=>{
+  const [row]=makeRows([['company','email','address','city','zip'],['Acme','a@acme.example','123 Main Street Suite 200','Phoenix','85001-1234']]);
+  assert.equal(selectMatch(row,[match()]).name,'Acme LLC');
+  const wrong={...match(),values:{...match().values,address:'124 Main St'}};
+  assert.equal(selectMatch(row,[wrong]),null);
+});
+test('fills phone when Google omits website but business name and street confirm the branch',async()=>{
+  const rows=makeRows([['company','email','address'],['Acme','a@acme.example','123 Main Street #200']]);
+  const candidate={...match(),values:{...match().values,'Company domain':''}};
+  await run(rows,async()=>({candidates:[candidate]}));assert.equal(rows[0].values.phone,'602-555-0100');assert.equal(rows[0].values['Company domain'],'acme.example');
+  const [noAddress]=makeRows([['company','email'],['Acme','a@acme.example']]);assert.equal(selectMatch(noAddress,[candidate]),null);
+});
+test('accepts website subdomains but rejects unrelated domains at the same street',()=>{
+  const [row]=makeRows([['company','email'],['Acme','a@acme.example']]);
+  assert.equal(selectMatch(row,[{...match(),values:{...match().values,'Company domain':'locations.acme.example'}}]).name,'Acme LLC');
+  assert.equal(selectMatch(row,[{...match('Different Company'),values:{...match().values,'Company domain':'unrelated.example'}}]),null);
+});

@@ -86,3 +86,11 @@ test('domain search uses the address, makes one Google call, and removes non-Ari
     assert.equal(response.status,200);const data=await response.json();assert.equal(calls,1);assert.equal(data.candidates.length,1);assert.equal(data.candidates[0].values.State,'AZ');
   } finally {globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=oldKey;}
 });
+test('Google permission errors expose safe diagnostic codes without leaking its raw message',async()=>{
+  const oldFetch=globalThis.fetch,oldKey=process.env.GOOGLE_API_KEY;process.env.GOOGLE_API_KEY='test-only-key';
+  try {
+    globalThis.fetch=async()=>new Response(JSON.stringify({error:{status:'PERMISSION_DENIED',message:'secret request detail'}}),{status:403});
+    const response=await lookup(request('POST',{company:'Acme'},undefined,issueSession()));const data=await response.json();
+    assert.equal(response.status,502);assert.match(data.error,/403 PERMISSION_DENIED/);assert.ok(!data.error.includes('secret request detail'));
+  }finally{globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=oldKey;}
+});

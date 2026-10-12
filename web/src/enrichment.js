@@ -1,24 +1,40 @@
 import { COLUMNS, domain, text } from './processor.js';
-import { searchDomain, isArizona, buildSearchQuery } from './business-search.js';
+import { searchDomain, emailBusinessDomain, isArizona, buildSearchQuery } from './business-search.js';
 export const BUSINESS_FIELDS = ['company name','Company domain','phone','address','city','State','zip'];
 const normalized = value => text(value).toLowerCase().replace(/[^a-z0-9]/g,'');
 const companyKey = value => normalized(text(value).replace(/\b(incorporated|corporation|limited|inc|corp|llc|ltd)\.?$/i,''));
 export function lookupInput(row) {
   return {company:row.values['company name'],domain:searchDomain(row.values),address:row.values.address,city:row.values.city,state:'AZ',zip:row.values.zip};
 }
+const STREET_WORDS = {north:'n',south:'s',east:'e',west:'w',street:'st',avenue:'ave',av:'ave',road:'rd',drive:'dr',boulevard:'blvd',lane:'ln',court:'ct',circle:'cir',parkway:'pkwy',highway:'hwy',place:'pl',terrace:'ter',trail:'trl'};
+export function streetKey(value) {
+  return text(value).toLowerCase()
+    .replace(/(?:\b(?:suite|ste|unit|apt|apartment|floor|fl)\b\.?|#)\s*[a-z0-9-]+.*$/i,'')
+    .replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean)
+    .map(word=>STREET_WORDS[word] || word).join('');
+}
+function sameDomain(a,b) {
+  const left=domain(a),right=domain(b);
+  return !!left && !!right && (left===right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`));
+}
 export function selectMatch(row, candidates) {
   const preferredDomain = searchDomain(row.values);
   const matches = candidates.filter(candidate => {
     if (!isArizona(candidate)) return false;
-    if (preferredDomain) {
-      if (domain(candidate.values['Company domain']) !== preferredDomain) return false;
-    } else if (!companyKey(row.values['company name']) || companyKey(candidate.name)!==companyKey(row.values['company name'])) return false;
-    // An exact business/domain match must also agree with any supplied location.
-    for (const key of ['address','city','State','zip']) {
+    const nameMatches=!!companyKey(row.values['company name']) && companyKey(candidate.name)===companyKey(row.values['company name']);
+    const addressGiven=!!text(row.values.address);
+    const addressMatches=addressGiven && !!streetKey(row.values.address) && streetKey(row.values.address)===streetKey(candidate.values.address);
+    // Domain is preferred, but Google may omit a website or return a brand's
+    // alternate domain. Exact business name plus the street confirms that branch.
+    if(preferredDomain){
+      if(!sameDomain(preferredDomain,candidate.values['Company domain']) && !(nameMatches && addressMatches))return false;
+    }else if(!nameMatches)return false;
+    if(addressGiven && !addressMatches)return false;
+    for (const key of ['city','State','zip']) {
       if (!text(row.values[key])) continue;
-      const a = key==='State' && normalized(row.values[key])==='arizona'?'az':normalized(row.values[key]);
-      const b = key==='State' && normalized(candidate.values[key])==='arizona'?'az':normalized(candidate.values[key]);
-      if (!b || a!==b) return false;
+      const normalize = value=>key==='zip'?text(value).split('-')[0]:key==='State' && normalized(value)==='arizona'?'az':normalized(value);
+      const a=normalize(row.values[key]),b=normalize(candidate.values[key]);
+      if(!b || a!==b)return false;
     }
     return true;
   });
@@ -79,6 +95,11 @@ export async function enrichRows(rows, lookup, {signal,onProgress=()=>{},wait=de
     return cache.get(key);
   }
   async function processRow(row) {
+    // This information is already present in the input; Google is not needed.
+    const inferred=emailBusinessDomain(row.values.email);
+    if(!text(row.values['Company domain']) && inferred){
+      row.values['Company domain']=inferred;row.domainSource='Company domain copied from the supplied business email.';summary.filled++;
+    }
     if(!COLUMNS.some(field=>!text(row.values[field]))){row.enrichment={status:'complete',message:'All information already supplied.'};}
     else if(!text(row.values['company name']) && !searchDomain(row.values)){row.enrichment={status:'review',message:'No business name or custom domain for business lookup; missing values left blank.'};summary.review++;}
     else {
@@ -91,7 +112,7 @@ export async function enrichRows(rows, lookup, {signal,onProgress=()=>{},wait=de
         if(match){
           const count=fillMissing(row,match);summary.filled+=count;summary.matched++;
           row.enrichment={status:'matched',message:`Google Maps: ${match.name}; ${count} missing fields filled.`,candidate:match};
-        }else {summary.review++;row.enrichment={status:'review',message:'No unambiguous business/location match; missing values left blank. Use Find business details to review matches.'};}
+        }else {summary.review++;row.enrichment={status:'review',message:result.candidates?.length ? `${result.candidates.length} Google matches returned, but business or location could not be confirmed uniquely. Missing values left blank.` : 'Google returned no Arizona business matches. Missing values left blank.'};}
       }catch(error){
         if(signal?.aborted || error.name==='AbortError')return;
         summary.failed++;row.enrichment={status:'failed',message:`Lookup unavailable; missing values left blank. ${error.message}`};
