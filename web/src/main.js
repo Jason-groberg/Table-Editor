@@ -5,10 +5,24 @@ const $ = id => document.getElementById(id);
 let sheets = [], rows = [], page = 0, generation = 0, signedIn = false, busy = false;
 let enrichmentController = null;
 function setEnriching(active) {
+  $('lookup-loading').hidden=!active;
+  $('review').setAttribute('aria-busy',String(active));
+  if(active){
+    $('review').hidden=true;
+    $('lookup-progress').max=Math.max(1,rows.length);
+    updateLoading({processed:0,filled:0});
+  }
   $('cancel-enrichment').hidden=!active;
   $('process').disabled=active || !sheets.length;
   $('add-row').disabled=active;
   $('review-download').disabled=active;
+}
+function updateLoading(progress) {
+  $('lookup-progress').value=progress.processed;
+  $('lookup-progress-text').textContent=`${progress.processed} of ${rows.length} rows processed · ${progress.filled} fields filled`;
+  $('lookup-loading-note').textContent=progress.waiting
+    ? 'The lookup service is busy. Retrying in about a minute; your progress is saved.'
+    : 'Finding missing business details may take some time. Keep this page open; your completed table will appear when the lookups finish.';
 }
 
 function element(tag, content, className) { const el=document.createElement(tag); if(content!==undefined) el.textContent=content; if(className) el.className=className; return el; }
@@ -84,11 +98,11 @@ $('process').addEventListener('click',async()=>{
   rows=selected.flatMap(sheet=>normalizeTable(sheet.table,sheet.mapping,sheet.name));
   const batch=rows;
   const controller=new AbortController();enrichmentController=controller;
-  setEnriching(true);page=0;renderRows();message(`Looking up missing business details: 0 of ${batch.length} rows…`);
+  setEnriching(true);page=0;renderRows();message('');
   try {
     const result=await enrichRows(batch,(input,signal)=>api('lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal}),{
       signal:controller.signal,
-      onProgress:progress=>{if(enrichmentController===controller)message(`Looking up missing business details: ${progress.processed} of ${batch.length} rows · ${progress.filled} fields filled.${progress.waiting?' Google lookup limit reached; retrying in about a minute.':''}`);}
+      onProgress:progress=>{if(enrichmentController===controller)updateLoading(progress);}
     });
     if(enrichmentController!==controller || rows!==batch)return;
     enrichmentController=null;setEnriching(false);renderRows();
@@ -112,7 +126,8 @@ function updateStats(validation){
   $('download').disabled=!!enrichmentController || !rows.length || errors>0;
 }
 function renderRows(){
-  $('review').hidden=!rows.length;if(!rows.length)return;
+  $('review').hidden=!!enrichmentController || !rows.length;
+  if(enrichmentController || !rows.length)return;
   const validation=validateRows(rows);updateStats(validation);
   const indexes=rows.map((_,i)=>i).filter(i=>!$('issues-only').checked || validation[i].errors.length || validation[i].duplicate || ['review','failed'].includes(rows[i].enrichment?.status));
   page=Math.min(Math.max(page,0),Math.max(0,Math.ceil(indexes.length/50)-1));

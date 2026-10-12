@@ -28,10 +28,11 @@ test('lookup still runs when domain is present but other business fields are abs
   const rows=makeRows([['company','domain'],['Acme','acme.example']]);let calls=0;
   await run(rows,async()=>{calls++;return {candidates:[match()]};});assert.equal(calls,1);assert.equal(rows[0].values.phone,'602-555-0100');
 });
-test('failed lookups retain blanks and rows; missing configuration stops further requests',async()=>{
-  const rows=makeRows([['company','city'],['Acme','Phoenix'],['Other','Mesa']]);let calls=0;
+test('missing configuration stops queued requests and retains all rows',async()=>{
+  const rows=makeRows([['company','city'],...Array.from({length:10},(_,i)=>[`Business ${i}`,'Phoenix'])]);let calls=0;
   const result=await run(rows,async()=>{calls++;throw Object.assign(new Error('Not configured'),{status:503});});
-  assert.equal(calls,1);assert.equal(result.failed,2);assert.equal(rows[0].values.phone,'');assert.equal(parseCSV(exportCSV(rows)).length,3);
+  // Requests already in flight may finish; no further work is sent after failure.
+  assert.ok(calls>=1 && calls<=4);assert.equal(result.failed,10);assert.equal(rows[0].values.phone,'');assert.equal(parseCSV(exportCSV(rows)).length,11);
 });
 test('temporary failure does not prevent later rows from completing',async()=>{
   const rows=makeRows([['company','city'],['Other','Mesa'],['Acme','Phoenix']]);
@@ -74,4 +75,38 @@ test('name-only queries fill unique Arizona matches but reject out-of-state or a
   const [row]=makeRows([['company'],['Acme']]);
   assert.equal(selectMatch(row,[{...match(),values:{...match().values,State:'CO'}}]),null);
   assert.equal(selectMatch(row,[match(),match()]),null);
+});
+
+test('uses at most four concurrent requests and preserves rows when results finish out of order',async()=>{
+  const rows=makeRows([['company'],...Array.from({length:9},(_,i)=>[`Business ${i}`])]);
+  let active=0,peak=0,calls=0;const pending=[];
+  const work=run(rows,input=>new Promise(resolve=>{active++;calls++;peak=Math.max(peak,active);pending.push(()=>{active--;resolve({candidates:[match(input.company)]});});}));
+  await new Promise(setImmediate);assert.equal(active,4);
+  while(calls<9 || pending.length){while(pending.length)pending.pop()();await new Promise(setImmediate);}
+  const result=await work;
+  assert.equal(peak,4);assert.equal(calls,9);assert.equal(result.processed,9);
+  rows.forEach((row,i)=>{assert.equal(row.values['company name'],`Business ${i}`);assert.equal(row.values.phone,'602-555-0100');});
+});
+test('concurrent duplicate queries share the same in-flight promise',async()=>{
+  const rows=makeRows([['company'],...Array.from({length:8},()=>['Acme'])]);let calls=0,finish;
+  const work=run(rows,()=>{calls++;return new Promise(resolve=>{finish=resolve;});});
+  await new Promise(setImmediate);assert.equal(calls,1);finish({candidates:[match()]});
+  const result=await work;assert.equal(calls,1);assert.equal(result.matched,8);
+});
+test('cancelling a concurrent batch blocks queued work and late updates',async()=>{
+  const rows=makeRows([['company'],...Array.from({length:12},(_,i)=>[`Business ${i}`])]);
+  const controller=new AbortController();let calls=0;const pending=[];
+  const work=run(rows,input=>new Promise(resolve=>{calls++;pending.push(()=>resolve({candidates:[match(input.company)]}));}),{signal:controller.signal});
+  await new Promise(setImmediate);assert.equal(calls,4);controller.abort();pending.forEach(finish=>finish());
+  const result=await work;assert.equal(calls,4);assert.equal(result.cancelled,true);assert.equal(result.processed,0);assert.ok(rows.every(row=>!row.values.phone));
+});
+test('workers share request pacing rather than each sending their own burst',async()=>{
+  const rows=makeRows([['company'],...Array.from({length:6},(_,i)=>[`Business ${i}`])]);const waits=[];
+  await run(rows,async()=>({candidates:[]}),{interval:600,wait:async ms=>waits.push(ms)});
+  assert.equal(waits.length,5);assert.ok(waits.every(ms=>ms>=0 && ms<=600));
+});
+test('different supplied names share a request when the preferred domain produces the same search',async()=>{
+  const rows=makeRows([['company','email'],['Acme','a@acme.example'],['Acme LLC','b@acme.example']]);let calls=0;
+  const result=await run(rows,async()=>{calls++;return {candidates:[match()]};});
+  assert.equal(calls,1);assert.equal(result.matched,2);
 });

@@ -29,4 +29,4 @@ export default async function handler(request) {
     }).filter(isArizona)});
   } catch { return json({error:'Business lookup timed out or failed. Your imported data has not changed.'},502); }
 }
-export const config = {rateLimit:{action:'rate_limit', windowLimit:20, windowSize:60, aggregateBy:['ip','domain']}};
+export const config = {rateLimit:{action:'rate_limit', windowLimit:120, windowSize:60, aggregateBy:['ip','domain']}};
