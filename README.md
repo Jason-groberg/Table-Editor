@@ -34,7 +34,7 @@ Open `http://localhost:4173` (use localhost for the secure-cookie exception supp
 6. Verify wrong-password rejection, correct login, refresh, sign-out, protected lookup, Netlify rate limits, expired sessions, CSP/headers and a small synthetic CSV/XLSX batch. Check real Google matches before accepting any business. Confirm functions are not cached.
 7. Pilot representative salesperson files; verify all 13 HubSpot property mappings, owner values, dates, booleans, international phone numbers and the resulting CRM import. Only then change the manager's bookmark and retire Streamlit.
 
-Use the **CRM CSV** for direct CRM upload. Use the separate **review copy** if opening the data in Excel: it neutralizes formula-leading characters, which may alter displayed values and should not be uploaded to the CRM.
+Use the **CRM CSV** for direct CRM upload. It is downloadable without editing; invalid dates, emails, domains and formula-like values are left blank in the exported copy while the original values remain visible in the table. Conflicting mapped columns use the first displayed value. Use the separate **review copy** if opening the data in Excel: it neutralizes formula-leading characters, which may alter displayed values and should not be uploaded to the CRM.
 
 Sign-in has no automatic app expiration. A persistent cookie is renewed for 400 days whenever the user returns to the app. Browsers may cap retention or clear cookies, so indefinite sign-in cannot be guaranteed after prolonged inactivity or in private browsing. Signing out, clearing cookies, or using a different browser requires signing in again. Still-valid older sessions are upgraded on the next visit; expired sessions require a fresh login. Rotating either auth secret invalidates all sessions. Signing out clears the browser cookie and in-memory batch; a copied session token remains valid until either authentication secret is rotated. Shared-password access has no individual audit trail. Remembering sign-in does not save uploaded files: reloading still clears the batch.
 
@@ -48,13 +48,13 @@ Reference docs: [Netlify Functions](https://docs.netlify.com/build/functions/ove
 
 ## Fixed import rules
 
-All 13 columns are always exported. `is doorpull` is fixed to `true` for every row, including when an input says otherwise. It is the only required field and is read-only in the editor. There is no required-field selector or default state. Missing contact and location fields stay blank unless supplied by the source, entered manually, or filled from an automatic matched business lookup or a manually accepted suggestion. Failed lookups do not block exporting incomplete rows. Format, formula-safety and conflicting-value checks still apply to populated fields.
+All 13 columns are always exported. `is doorpull` is fixed to `true` for every row, including when an input says otherwise. State is also fixed to `AZ`. Both are read-only in the combined editor. There is no required-field selector or default state. Missing contact and location fields stay blank unless supplied by the source, entered manually, or filled from an automatic matched business lookup or a manually accepted suggestion. Failed lookups do not block exporting incomplete rows. Format and conflict warnings remain visible for optional review and do not block download.
 
 ## Automatic business enrichment
 
-Press **Combine & fill missing details** to normalize the files, look up missing business fields, and prepare a single CRM CSV. Successful batches automatically start a download; the download button remains available if the browser blocks automatic downloads or further edits are needed. Existing format and conflict errors still require correction before CRM export.
+Press **Combine & fill missing details** to normalize the files, look up missing business fields, and prepare a single CRM CSV. Successful batches automatically start a download; the download button remains available if the browser blocks automatic downloads or further edits are needed. Review is optional: format and conflict warnings do not block export. The export leaves invalid/unsafe values blank and preserves the displayed first value for conflicting inputs.
 
-Google Places can fill business name, company domain, business phone, address, city, state and ZIP. It does not supply individual contact names, email addresses, contact owners or door-pull dates. Existing source values are never overwritten; unknown values remain blank and `is doorpull` remains true.
+Google Places can fill business name, company domain, business phone, address, city and ZIP. State is always set to AZ, independently of API results. It does not supply individual contact names, email addresses, contact owners or door-pull dates. Existing source values are never overwritten; unknown values remain blank and `is doorpull` remains true.
 
 Every row missing any of the 13 output values is eligible for a lookup. Search precedence is a custom business domain from the email, then an existing company domain, then the company/account name. Common personal-email providers are excluded. Available street address, city and ZIP are added to the query; every query includes Arizona. With only a name, the query is `{company name} in Arizona`. With neither a name nor a usable domain, the row is retained without a lookup.
 
@@ -62,7 +62,7 @@ Each eligible row uses one Google Text Search request, with no fallback search b
 
 Up to four requests run concurrently, sharing a 600 ms interval between request starts (about 100 per minute) below the server's 120/minute per-IP limit. Duplicate company/location queries reuse results within the batch. A rate-limited call retries once after about a minute. Missing API configuration stops queued calls for that batch; requests already in flight may finish. temporary failures do not prevent subsequent rows from being processed. Large batches can take time: keep the tab open. **Stop lookup & review** cancels further work and retains completed enrichment. Changing files/mappings cancels the old batch and prevents late responses from changing the new batch.
 
-Verification: 45 automated tests passed, including automatic enrichment, source-value preservation, duplicate queries, incomplete exports, ambiguous matches, API errors, retries and cancellation. Google responses in automated tests are mocked; live API credentials still need verification on Netlify.
+Verification: 47 automated tests passed, including automatic enrichment, source-value preservation, duplicate queries, incomplete exports, ambiguous matches, API errors, retries and cancellation. Google responses in automated tests are mocked; live API credentials still need verification on Netlify.
 
 US numeric CSV dates (`M/D/YYYY`) are converted to ISO `YYYY-MM-DD` during import. Invalid dates remain flagged for review.
 
@@ -73,3 +73,5 @@ Blank company domains are filled directly from valid custom business email domai
 ## Uploaded table editor
 
 After choosing files, the app shows their original tables in an editable preview. Select a file or worksheet, edit cells or headers, add/remove rows, and choose whether to include the sheet. Each sheet keeps its own edits and pagination (50 rows per page). Combine reads these edited source tables. Headers are mapped automatically; unrecognized columns stay visible in the source preview and are listed as excluded from the CRM output. Editing a header to a recognized field updates its mapping. Editing source data cancels current enrichment and clears the previous combined result.
+
+Google phone enrichment uses the listed national phone number, or the international phone number if national is absent. Existing supplied phone values are preserved. The download button is available as soon as processing finishes, even when values are missing or have review warnings.

@@ -94,3 +94,13 @@ test('Google permission errors expose safe diagnostic codes without leaking its 
     assert.equal(response.status,502);assert.match(data.error,/403 PERMISSION_DENIED/);assert.ok(!data.error.includes('secret request detail'));
   }finally{globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=oldKey;}
 });
+test('uses Google international phone when the national phone is absent',async()=>{
+  const oldFetch=globalThis.fetch,oldKey=process.env.GOOGLE_API_KEY;process.env.GOOGLE_API_KEY='test-only-key';
+  try {
+    globalThis.fetch=async(url,options)=>{
+      assert.match(options.headers['X-Goog-FieldMask'],/places.internationalPhoneNumber/);
+      return new Response(JSON.stringify({places:[{displayName:{text:'Acme'},internationalPhoneNumber:'+1 602-555-0100',addressComponents:[{types:['administrative_area_level_1'],shortText:'AZ'}]}]}),{status:200});
+    };
+    const response=await lookup(request('POST',{company:'Acme'},undefined,issueSession()));const data=await response.json();assert.equal(data.candidates[0].values.phone,'+1 602-555-0100');
+  }finally{globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=oldKey;}
+});

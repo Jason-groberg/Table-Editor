@@ -54,7 +54,7 @@ export function normalizeTable(table, mapping, source) {
     cells.forEach((value, col) => {
       const key = mapping[col];
       const incoming = text(value);
-      if (!key || !incoming || key === 'is doorpull') return;
+      if (!key || !incoming || (key === 'is doorpull' || key === 'State')) return;
       if (key === FULL_NAME) {
         if (fullName && fullName !== incoming) conflicts.push({field: key, values: [fullName, incoming]});
         else fullName = incoming;
@@ -67,6 +67,7 @@ export function normalizeTable(table, mapping, source) {
     values['First name'] ||= first;
     values['last name'] ||= last.join(' ');
     values['is doorpull'] = 'true';
+    values.State = 'AZ';
     values['Date of last door pull'] = normalizeDate(values['Date of last door pull']);
     if (domain(values['Company domain'])) values['Company domain'] = domain(values['Company domain']);
     return [{ values, source: `${source}, row ${index + 2}`, conflicts }];
@@ -75,7 +76,7 @@ export function normalizeTable(table, mapping, source) {
 export function isFormula(value) {
   return /^[\s\u0000-\u001f]*[=+@-]/.test(String(value));
 }
-export function safePhone(value) { return /^\+?[\d ()-]+(?:\s*(?:x|ext\.?)\s*\d+)?$/i.test(value) && (value.match(/\d/g) || []).length >= 7; }
+export function safePhone(value) { return /^\+?[\d ().-]+(?:\s*(?:x|ext\.?)\s*\d+)?$/i.test(value) && (value.match(/\d/g) || []).length >= 7; }
 export function validateRows(rows) {
   const seen = new Map();
   return rows.map((row, index) => {
@@ -97,12 +98,24 @@ export function validateRows(rows) {
     return { errors, duplicate };
   });
 }
+export function csvValues(row) {
+  const values=Object.fromEntries(COLUMNS.map(key=>[key,text(row.values[key])]));
+  values.State='AZ';values['is doorpull']='true';
+  values['Date of last door pull']=normalizeDate(values['Date of last door pull']);
+  const date=values['Date of last door pull'];
+  if(date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date))values['Date of last door pull']='';
+  if(values.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email))values.email='';
+  values['Company domain']=domain(values['Company domain']);
+  for(const key of COLUMNS){
+    if(isFormula(values[key]) && !(key==='phone' && safePhone(values[key])))values[key]='';
+  }
+  return COLUMNS.map(key=>values[key]);
+}
 export function exportCSV(rows) {
   if (!rows.length) throw new Error('There are no rows to export.');
-  if (validateRows(rows).some(row => row.errors.length)) throw new Error('Resolve validation errors before exporting.');
-  // Formula-like data is blocked above. A leading + in a legitimate telephone is
-  // retained for the CRM; use the dedicated spreadsheet-safe review download in Excel.
-  return '\uFEFF' + Papa.unparse({ fields: COLUMNS, data: rows.map(row => COLUMNS.map(col => row.values[col])) }, {newline:'\r\n', quotes:true});
+  // Review is optional. Preserve displayed values, blank invalid/unsafe cells,
+  // and always export the operation's fixed State and doorpull values.
+  return '\uFEFF' + Papa.unparse({ fields: COLUMNS, data: rows.map(csvValues) }, {newline:'\r\n', quotes:true});
 }
 export function reviewCSV(rows) {
   return '\uFEFF' + Papa.unparse({fields:COLUMNS, data:rows.map(row=>COLUMNS.map(key=>row.values[key]))}, {escapeFormulae:true, quotes:true});

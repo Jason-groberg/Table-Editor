@@ -13,27 +13,27 @@ test('keeps last name when no first name or full name is supplied',()=>assert.eq
 test('duplicate headers coalesce blanks and flag conflicting values',()=>{
   const rows=process([['company name','company name'],['','Acme'],['Alpha','Beta']]);
   assert.equal(rows[0].values['company name'],'Acme'); assert.equal(rows[1].conflicts.length,1);
-  assert.throws(()=>exportCSV(rows),/Resolve/);
+  assert.equal(parseCSV(exportCSV(rows))[2][COLUMNS.indexOf('company name')],'Alpha');
 });
-test('full name fills only empty name fields; retains supplied state and always sets doorpull true',()=>{
+test('full name fills only empty name fields; always sets State AZ and doorpull true',()=>{
   const [row]=process([["Client's Full name",'First name','State','is doorpull'],[' Jane   Smith ','Janet','CO','no']],{defaultState:'AZ'});
-  assert.equal(row.values['First name'],'Janet'); assert.equal(row.values['last name'],'Smith');assert.equal(row.values.State,'CO');assert.equal(row.values['is doorpull'],'true');
-  assert.equal(process([['company'],['Acme']],{defaultState:'AZ'})[0].values.State,'');
+  assert.equal(row.values['First name'],'Janet'); assert.equal(row.values['last name'],'Smith');assert.equal(row.values.State,'AZ');assert.equal(row.values['is doorpull'],'true');
+  assert.equal(process([['company'],['Acme']],{defaultState:'AZ'})[0].values.State,'AZ');
 });
 test('only doorpull is required; all missing contact and location values export blank',()=>{
   const rows=process([['company'],['Acme']]);
   assert.equal(validateRows(rows)[0].errors.length,0);
   const output=parseCSV(exportCSV(rows));
-  for(const key of ['email','phone','address','city','State','zip','Company domain']) assert.equal(output[1][COLUMNS.indexOf(key)],'');
+  for(const key of ['email','phone','address','city','zip','Company domain']) assert.equal(output[1][COLUMNS.indexOf(key)],'');
   assert.equal(output[1][COLUMNS.indexOf('is doorpull')],'true');
-  rows[0].values['is doorpull']='';assert.throws(()=>exportCSV(rows),/Resolve/);
+  rows[0].values['is doorpull']='';assert.equal(parseCSV(exportCSV(rows))[1][12],'true');assert.equal(output[1][5],'AZ');
 });
 test('conflicting imported doorpull values are replaced with the fixed true value',()=>{
   const rows=process([['company','is doorpull','doorpull'],['Acme','false','yes']]);
   assert.equal(rows[0].values['is doorpull'],'true');assert.deepEqual(rows[0].conflicts,[]);
 });
-test('formula injection blocked but legitimate international phone survives CRM export',()=>{
-  for(const value of ['=1+1',' +cmd','@SUM(A1)','-1+2','\t=cmd'])assert.throws(()=>exportCSV(process([['company'],[value]])),/Resolve/);
+test('formula-like values export blank while legitimate international phone survives',()=>{
+  for(const value of ['=1+1',' +cmd','@SUM(A1)','-1+2','\t=cmd'])assert.equal(parseCSV(exportCSV(process([['company'],[value]])))[1][2],'');
   const rows=process([['company','phone'],['Acme','+1 (602) 555-0100']]);assert.ok(exportCSV(rows).includes('"+1 (602) 555-0100"'));assert.ok(reviewCSV(rows).includes("'+1"));
 });
 test('validates email, dates and domain; duplicate contact warning retains rows',()=>{
@@ -61,4 +61,10 @@ test('converts US CSV dates without silently repairing invalid dates',()=>{
   assert.equal(rows[1].values['Date of last door pull'],'2/30/2026');
   assert.equal(rows[2].values['Date of last door pull'],'2026-10-12');
   assert.equal(validateRows(rows)[0].errors.length,0);assert.ok(validateRows(rows)[1].errors.length);
+});
+
+test('export is available without edits and blanks invalid cells without changing the table',()=>{
+  const rows=process([['company','email','date added','domain'],['Acme','invalid-email','2/30/2026','not a domain']]);
+  const csv=parseCSV(exportCSV(rows));assert.equal(csv[1][9],'');assert.equal(csv[1][0],'');assert.equal(csv[1][10],'');assert.equal(csv[1][5],'AZ');
+  assert.equal(rows[0].values.email,'invalid-email');assert.equal(rows[0].values['Date of last door pull'],'2/30/2026');
 });

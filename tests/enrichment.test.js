@@ -8,7 +8,7 @@ const run=(rows,lookup,options={})=>enrichRows(rows,lookup,{wait:async()=>{},int
 test('combine enrichment fills missing business fields and exports exact schema without changing source values',async()=>{
   const rows=makeRows([['company','city','phone','email'],['Acme','Phoenix','602-555-9999','person@acme.example']]);
   const result=await run(rows,async()=>({candidates:[match()]}));
-  assert.equal(result.matched,1);assert.equal(result.filled,4);
+  assert.equal(result.matched,1);assert.equal(result.filled,3);
   assert.equal(rows[0].values.phone,'602-555-9999');assert.equal(rows[0].values.email,'person@acme.example');
   const csv=parseCSV(exportCSV(rows));assert.deepEqual(csv[0],COLUMNS);assert.equal(csv[1][COLUMNS.indexOf('zip')],'85001');assert.equal(csv[1][12],'true');
 });

@@ -15,7 +15,7 @@ export default async function handler(request) {
     const result = await fetch('https://places.googleapis.com/v1/places:searchText', {
       method:'POST', signal:AbortSignal.timeout(10000),
       headers:{'Content-Type':'application/json', 'X-Goog-Api-Key':process.env.GOOGLE_API_KEY,
-        'X-Goog-FieldMask':'places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.addressComponents,places.googleMapsUri,places.attributions'},
+        'X-Goog-FieldMask':'places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber,places.addressComponents,places.googleMapsUri,places.attributions'},
       body:JSON.stringify({textQuery:buildSearchQuery(body),pageSize:3}),
     });
     if (!result.ok) {
@@ -28,7 +28,7 @@ export default async function handler(request) {
     return json({candidates:(data.places || []).slice(0,3).map(place=> {
       const part = (type, short=false) => {const c = place.addressComponents?.find(c=>c.types?.includes(type)); return c?.[short?'shortText':'longText'] || '';};
       return {name:place.displayName?.text || '', address:place.formattedAddress || '', maps:place.googleMapsUri || '',
-        attributions:place.attributions || [], values:{'Company domain':domain(place.websiteUri), phone:place.nationalPhoneNumber || '',
+        attributions:place.attributions || [], values:{'Company domain':domain(place.websiteUri), phone:place.nationalPhoneNumber || place.internationalPhoneNumber || '',
           address:[part('street_number'),part('route')].filter(Boolean).join(' '), city:part('locality') || part('postal_town'),
           State:part('administrative_area_level_1',true), zip:part('postal_code')}};
     }).filter(isArizona)});

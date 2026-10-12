@@ -131,7 +131,7 @@ $('process').addEventListener('click',async()=>{
     if(enrichmentController!==controller || rows!==batch)return;
     enrichmentController=null;setEnriching(false);renderRows();
     const summary=`${result.cancelled?'Lookup stopped':'Combined'}: ${batch.length} rows · ${result.filled} fields filled · ${result.review} need match review · ${result.failed} lookups unavailable. Missing values remain blank.`;
-    if(!result.cancelled && batch.length && !validateRows(batch).some(row=>row.errors.length)){
+    if(!result.cancelled && batch.length){
       download(exportCSV(batch),'hubspot_ready_leads.csv');
       message(`${summary} Your CRM CSV is ready. If the download did not start, click Download CRM CSV.`);
     }else message(`${summary} Review the table and use Download CRM CSV when ready.`);
@@ -142,12 +142,12 @@ function download(content,name){const url=URL.createObjectURL(new Blob([content]
 $('download').addEventListener('click',()=>{try{download(exportCSV(rows),'hubspot_ready_leads.csv');}catch(error){message(error.message);}});
 $('review-download').addEventListener('click',()=>download(reviewCSV(rows),'lead_review_not_for_crm.csv'));
 $('issues-only').addEventListener('change',()=>{page=0;renderRows();});
-$('add-row').addEventListener('click',()=>{rows.push({values:Object.fromEntries(COLUMNS.map(key=>[key,key==='is doorpull'?'true':''])),source:'Manually added',conflicts:[]});page=Math.floor((rows.length-1)/50);$('issues-only').checked=false;renderRows();});
+$('add-row').addEventListener('click',()=>{rows.push({values:Object.fromEntries(COLUMNS.map(key=>[key,key==='is doorpull'?'true':key==='State'?'AZ':''])),source:'Manually added',conflicts:[]});page=Math.floor((rows.length-1)/50);$('issues-only').checked=false;renderRows();});
 $('prev').addEventListener('click',()=>{page--;renderRows();});$('next').addEventListener('click',()=>{page++;renderRows();});
 function updateStats(validation){
   const errors=validation.filter(v=>v.errors.length).length;const duplicates=validation.filter(v=>v.duplicate).length;
-  $('stats').textContent=`${rows.length} rows · ${errors} with errors · ${duplicates} possible duplicates`;
-  $('download').disabled=!!enrichmentController || !rows.length || errors>0;
+  $('stats').textContent=`${rows.length} rows · ${errors} with review warnings · ${duplicates} possible duplicates`;
+  $('download').disabled=!!enrichmentController || !rows.length;
 }
 function renderRows(){
   $('review').hidden=!!enrichmentController || !rows.length;
@@ -174,7 +174,7 @@ function renderRows(){
     const remove=element('button','Remove');remove.disabled=!!enrichmentController;remove.addEventListener('click',()=>{rows.splice(index,1);$('suggestions').hidden=true;renderRows();});meta.append(lookup,remove);
     if(row.conflicts.length){const resolve=element('button','Accept displayed values');resolve.disabled=!!enrichmentController;resolve.addEventListener('click',()=>{row.conflicts=[];renderRows();});meta.append(resolve);}
     tr.append(meta);
-    for(const column of COLUMNS){const td=element('td');const input=element('input');input.value=row.values[column];input.readOnly=column==='is doorpull' || !!enrichmentController;input.setAttribute('aria-label',`Row ${index+1}, ${column}`);input.setAttribute('aria-invalid',String(validation[index].errors.some(e=>e.field===column)));
+    for(const column of COLUMNS){const td=element('td');const input=element('input');input.value=row.values[column];input.readOnly=column==='is doorpull' || column==='State' || !!enrichmentController;input.setAttribute('aria-label',`Row ${index+1}, ${column}`);input.setAttribute('aria-invalid',String(validation[index].errors.some(e=>e.field===column)));
       input.addEventListener('input',()=>{row.values[column]=input.value.trim();row.conflicts=row.conflicts.filter(c=>c.field!==column);const current=validateRows(rows);updateStats(current);showIssues();input.setAttribute('aria-invalid',String(current[index].errors.some(e=>e.field===column)));});td.append(input);tr.append(td);}
     body.append(tr);
   }table.append(body);
