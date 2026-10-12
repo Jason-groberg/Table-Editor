@@ -28,7 +28,7 @@ function updateLoading(progress) {
 function element(tag, content, className) { const el=document.createElement(tag); if(content!==undefined) el.textContent=content; if(className) el.className=className; return el; }
 function message(text='') { $('message').textContent=text; }
 function clearReview() { enrichmentController?.abort();enrichmentController=null;setEnriching(false);rows=[]; page=0; $('review').hidden=true; $('suggestions').hidden=true; $('suggestions').replaceChildren(); $('table').replaceChildren(); }
-function reset() { generation++; sheets=[]; clearReview(); $('files').value=''; $('mappings').replaceChildren(); $('process').disabled=true; }
+function reset() { generation++; sheets=[]; clearReview(); $('files').value=''; $('source-preview').replaceChildren(); $('process').disabled=true; }
 function authView(value) { signedIn=value; $('login').hidden=value; $('workspace').hidden=!value; $('logout').hidden=!value; if(!value) reset(); }
 async function api(path, options={}) {
   const response=await fetch(`/.netlify/functions/${path}`,{credentials:'same-origin',...options});
@@ -60,7 +60,7 @@ function loadFile(file) {
   });
 }
 $('files').addEventListener('change',async()=>{
-  const current=++generation;clearReview();sheets=[];$('mappings').replaceChildren();$('process').disabled=true;message('Reading files…');
+  const current=++generation;clearReview();sheets=[];$('source-preview').replaceChildren();delete $('source-preview').dataset.sheet;$('process').disabled=true;message('Reading files…');
   const files=[...$('files').files];
   if(!files.length){message('');return;}
   if(files.length>20 || files.reduce((n,f)=>n+f.size,0)>20*1024*1024){message('Use at most 20 files and 20 MB per batch.');return;}
@@ -69,32 +69,56 @@ $('files').addEventListener('change',async()=>{
     for(const file of files){loaded.push(...await loadFile(file));if(current!==generation)return;}
     if(loaded.reduce((n,s)=>n+s.table.length-1,0)>10000)throw new Error('Split this batch into 10,000 rows or fewer.');
     sheets=loaded.map(sheet=>({...sheet,selected:true,mapping:sheet.table[0].map(mapHeader)}));
-    renderMappings();$('process').disabled=false;message('Files loaded. Check the column mappings before combining. Unmapped columns will be excluded.');
+    renderSourcePreview();$('process').disabled=false;message('Files loaded. Review and edit your uploaded tables before combining.');
   } catch(error){if(current===generation)message(error.message);}
 });
-function renderMappings(){
-  $('mappings').replaceChildren();
-  for(const sheet of sheets){
-    const details=element('details',undefined,'mapping');details.open=true;
-    const summary=element('summary',`${sheet.name} · ${sheet.table.length-1} rows`);details.append(summary);
-    const include=element('label');const checkbox=element('input');checkbox.type='checkbox';checkbox.checked=sheet.selected;
-    checkbox.addEventListener('change',()=>{sheet.selected=checkbox.checked;clearReview();});include.append(checkbox,document.createTextNode(' Include this sheet'));details.append(include);
-    const grid=element('div',undefined,'mapping-grid');
-    sheet.table[0].forEach((header,i)=>{
-      const label=element('label',`${i+1}. ${header || '(blank header)'}`);const select=element('select');select.setAttribute('aria-label',`${sheet.name}, column ${i+1}: ${header}`);
-      for(const column of ['',...COLUMNS,FULL_NAME]){const option=element('option',column || 'Exclude this column');option.value=column;select.append(option);}
-      select.value=sheet.mapping[i];label.classList.toggle('unmapped',!select.value);
-      select.addEventListener('change',()=>{sheet.mapping[i]=select.value;label.classList.toggle('unmapped',!select.value);clearReview();});
-      label.append(select);grid.append(label);
-    });details.append(grid);$('mappings').append(details);
+function renderSourcePreview(){
+  const panel=$('source-preview');panel.replaceChildren();
+  if(!sheets.length)return;
+  const heading=element('h2','Uploaded table · review & edit');panel.append(heading);
+  panel.append(element('p','Edit cells directly. You can also rename a header if it needs correction. Your edits will be used when you combine the files.','hint'));
+  const controls=element('div',undefined,'toolbar');
+  const label=element('label','File or worksheet ');const select=element('select');select.setAttribute('aria-label','Uploaded file or worksheet');
+  sheets.forEach((sheet,i)=>{const option=element('option',`${sheet.name} · ${sheet.table.length-1} rows`);option.value=String(i);select.append(option);});
+  const selectedIndex=Math.min(Number(panel.dataset.sheet || 0),sheets.length-1);select.value=String(selectedIndex);
+  select.addEventListener('change',()=>{panel.dataset.sheet=select.value;renderSourcePreview();});label.append(select);controls.append(label);
+  const sheet=sheets[selectedIndex];
+  const includeLabel=element('label');const include=element('input');include.type='checkbox';include.checked=sheet.selected;
+  include.addEventListener('change',()=>{sheet.selected=include.checked;clearReview();});includeLabel.append(include,document.createTextNode(' Include this sheet when combining'));controls.append(includeLabel);
+  const add=element('button','Add row');add.addEventListener('click',()=>{
+    if(sheets.reduce((n,item)=>n+item.table.length-1,0)>=10000){message('This batch already has 10,000 rows. Remove a row before adding another.');return;}
+    sheet.table.push(Array(sheet.table[0].length).fill(''));sheet.previewPage=Math.floor((sheet.table.length-2)/50);clearReview();renderSourcePreview();
+  });controls.append(add);panel.append(controls);
+  const warning=element('p',undefined,'hint');
+  const updateWarning=()=>{const names=sheet.table[0].filter((_,i)=>!sheet.mapping[i]);warning.textContent=names.length?`These columns are visible here but excluded from the CRM CSV: ${names.map(name=>name || '(blank header)').join(', ')}. Rename a header to a recognized CRM field to include it.`:'All uploaded columns are recognized for the CRM import.';};updateWarning();panel.append(warning);
+  const wrap=element('div',undefined,'table-wrap source-table');const table=element('table');table.setAttribute('aria-label',`Uploaded table: ${sheet.name}`);
+  const head=element('thead');const hr=element('tr');hr.append(element('th','Row'));
+  sheet.table[0].forEach((header,col)=>{
+    const th=element('th');const input=element('input');input.value=header;input.setAttribute('aria-label',`${sheet.name}, header ${col+1}`);
+    input.addEventListener('input',()=>{sheet.table[0][col]=input.value;sheet.mapping[col]=mapHeader(input.value);clearReview();updateWarning();});th.append(input);hr.append(th);
+  });head.append(hr);table.append(head);
+  const count=sheet.table.length-1;const pages=Math.max(1,Math.ceil(count/50));sheet.previewPage=Math.min(Math.max(sheet.previewPage || 0,0),pages-1);
+  const body=element('tbody');
+  const start=sheet.previewPage*50+1;
+  for(let index=start;index<Math.min(sheet.table.length,start+50);index++){
+    const tr=element('tr');const meta=element('td');meta.append(element('strong',String(index)));
+    const remove=element('button','Remove');remove.setAttribute('aria-label',`${sheet.name}, remove row ${index}`);remove.addEventListener('click',()=>{sheet.table.splice(index,1);clearReview();renderSourcePreview();});meta.append(remove);tr.append(meta);
+    sheet.table[0].forEach((header,col)=>{
+      const td=element('td');const input=element('input');input.value=sheet.table[index][col] ?? '';input.setAttribute('aria-label',`${sheet.name}, row ${index}, column ${col+1}: ${header}`);
+      input.addEventListener('input',()=>{sheet.table[index][col]=input.value;clearReview();});td.append(input);tr.append(td);
+    });body.append(tr);
   }
+  table.append(body);wrap.append(table);panel.append(wrap);
+  const pagination=element('div',undefined,'pagination');const prev=element('button','← Previous');const next=element('button','Next →');prev.disabled=sheet.previewPage===0;next.disabled=sheet.previewPage>=pages-1;
+  prev.addEventListener('click',()=>{sheet.previewPage--;renderSourcePreview();});next.addEventListener('click',()=>{sheet.previewPage++;renderSourcePreview();});
+  pagination.append(prev,element('span',`Page ${sheet.previewPage+1} of ${pages} · ${count} rows`),next);panel.append(pagination);
 }
 $('cancel-enrichment').addEventListener('click',()=>enrichmentController?.abort());
 $('process').addEventListener('click',async()=>{
   if(busy || enrichmentController)return;
   clearReview();
   const selected=sheets.filter(sheet=>sheet.selected);
-  if(!selected.length || selected.some(sheet=>!sheet.mapping.some(Boolean))){message('Select at least one sheet and map at least one column in each selected sheet.');return;}
+  if(!selected.length || selected.some(sheet=>!sheet.mapping.some(Boolean))){message('Include at least one sheet and give at least one column a recognized header in each included sheet.');return;}
   rows=selected.flatMap(sheet=>normalizeTable(sheet.table,sheet.mapping,sheet.name));
   const batch=rows;
   const controller=new AbortController();enrichmentController=controller;

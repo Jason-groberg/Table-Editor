@@ -69,3 +69,7 @@ US numeric CSV dates (`M/D/YYYY`) are converted to ISO `YYYY-MM-DD` during impor
 While automatic lookups run, a loading animation and row-progress counter appear in place of the review table. Review and downloads become available after completion or after stopping the lookup.
 
 Blank company domains are filled directly from valid custom business email domains on Combine, even if Google fails or returns no matches. This is inferred from the source email, not verified by Google, and is labeled in the row's review notes. Existing company-domain values are preserved. Google website subdomains can match the source domain. Phone values still require a confirmed Arizona business/location match. Lookup notes distinguish no Google matches, unmatched results, and API failures; upstream permission errors include Google's safe status code without exposing credentials.
+
+## Uploaded table editor
+
+After choosing files, the app shows their original tables in an editable preview. Select a file or worksheet, edit cells or headers, add/remove rows, and choose whether to include the sheet. Each sheet keeps its own edits and pagination (50 rows per page). Combine reads these edited source tables. Headers are mapped automatically; unrecognized columns stay visible in the source preview and are listed as excluded from the CRM output. Editing a header to a recognized field updates its mapping. Editing source data cancels current enrichment and clears the previous combined result.

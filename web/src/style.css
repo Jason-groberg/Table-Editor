@@ -7,3 +7,13 @@
 #lookup-progress-text{font-size:13px;color:#365436;font-variant-numeric:tabular-nums}
 @keyframes lookup-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.loading-spinner{animation:none}}
+
+.source-preview:not(:empty){border-top:1px solid #e3e7de;padding-top:24px;margin-top:24px}
+.source-preview .toolbar label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.source-preview select{max-width:100%}
+.source-table th input{font-size:12px;font-weight:600;width:190px;background:#f8faf5}
+.source-table td input{width:190px}
+.source-table td:first-child{min-width:90px;white-space:nowrap}
+.source-table td:first-child strong{display:inline-block;margin-right:6px}
+.source-table th:first-child,.source-table td:first-child{position:sticky;left:0;background:#f8faf5;z-index:1}
+.source-table th:first-child{z-index:2;background:#eef3e8}
