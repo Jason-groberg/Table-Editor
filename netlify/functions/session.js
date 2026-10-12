@@ -1,7 +1,10 @@
 import { authenticated, configured, equal, issueSession, json, readJSON, sameOrigin, sessionCookie } from '../../server/security.js';
 export default async function handler(request) {
   if (!configured()) return json({error:'An administrator must configure access before this app can be used.'}, 503);
-  if (request.method === 'GET') return json({authenticated:authenticated(request)});
+  if (request.method === 'GET') {
+    const signedIn = authenticated(request);
+    return json({authenticated:signedIn},200,signedIn ? {'Set-Cookie':sessionCookie(issueSession())} : {});
+  }
   if (!['POST','DELETE'].includes(request.method)) return json({error:'Method not allowed'},405, {Allow:'GET, POST, DELETE'});
   if (!sameOrigin(request)) return json({error:'Request origin not allowed'},403);
   if (request.method === 'DELETE') return json({authenticated:false},200, {'Set-Cookie':sessionCookie('')});

@@ -36,7 +36,7 @@ export function parseCSV(source) {
   if (errors.length) throw new Error(`CSV cannot be read: ${errors[0].message}`);
   return parsed.data;
 }
-export function normalizeTable(table, mapping, source, options = {}) {
+export function normalizeTable(table, mapping, source) {
   return table.slice(1).flatMap((cells, index) => {
     if (cells.every(value => !text(value))) return [];
     const values = Object.fromEntries(COLUMNS.map(key => [key, '']));
@@ -45,7 +45,7 @@ export function normalizeTable(table, mapping, source, options = {}) {
     cells.forEach((value, col) => {
       const key = mapping[col];
       const incoming = text(value);
-      if (!key || !incoming) return;
+      if (!key || !incoming || key === 'is doorpull') return;
       if (key === FULL_NAME) {
         if (fullName && fullName !== incoming) conflicts.push({field: key, values: [fullName, incoming]});
         else fullName = incoming;
@@ -57,11 +57,7 @@ export function normalizeTable(table, mapping, source, options = {}) {
     const [first = '', ...last] = fullName.split(/\s+/);
     values['First name'] ||= first;
     values['last name'] ||= last.join(' ');
-    values.State ||= text(options.defaultState);
-    values['is doorpull'] ||= 'true';
-    const boolean = values['is doorpull'].toLowerCase();
-    if (['true', 'yes', '1'].includes(boolean)) values['is doorpull'] = 'true';
-    if (['false', 'no', '0'].includes(boolean)) values['is doorpull'] = 'false';
+    values['is doorpull'] = 'true';
     if (domain(values['Company domain'])) values['Company domain'] = domain(values['Company domain']);
     return [{ values, source: `${source}, row ${index + 2}`, conflicts }];
   });
@@ -70,11 +66,10 @@ export function isFormula(value) {
   return /^[\s\u0000-\u001f]*[=+@-]/.test(String(value));
 }
 export function safePhone(value) { return /^\+?[\d ()-]+(?:\s*(?:x|ext\.?)\s*\d+)?$/i.test(value) && (value.match(/\d/g) || []).length >= 7; }
-export function validateRows(rows, required = []) {
+export function validateRows(rows) {
   const seen = new Map();
   return rows.map((row, index) => {
     const errors = [];
-    for (const key of required) if (!text(row.values[key])) errors.push({ field: key, message: `${key} is required` });
     for (const key of COLUMNS) {
       const value = text(row.values[key]);
       if (isFormula(value) && !(key === 'phone' && safePhone(value))) errors.push({ field: key, message: `${key} starts with a spreadsheet formula character; correct it before export` });
@@ -82,7 +77,7 @@ export function validateRows(rows, required = []) {
     const email = row.values.email;
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push({field:'email', message:'Email format is invalid'});
     if (row.values['Company domain'] && !domain(row.values['Company domain'])) errors.push({field:'Company domain', message:'Company domain is invalid'});
-    if (row.values['is doorpull'] && !['true','false'].includes(row.values['is doorpull'])) errors.push({field:'is doorpull', message:'is doorpull must be true or false'});
+    if (row.values['is doorpull'] !== 'true') errors.push({field:'is doorpull', message:'is doorpull must be true'});
     const date = row.values['Date of last door pull'];
     if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10) !== date)) errors.push({field:'Date of last door pull', message:'Use a valid YYYY-MM-DD date'});
     row.conflicts.forEach(conflict => errors.push({field: conflict.field, message: `Conflicting ${conflict.field}: ${conflict.values.join(' / ')}`}));
@@ -92,9 +87,9 @@ export function validateRows(rows, required = []) {
     return { errors, duplicate };
   });
 }
-export function exportCSV(rows, required = []) {
+export function exportCSV(rows) {
   if (!rows.length) throw new Error('There are no rows to export.');
-  if (validateRows(rows, required).some(row => row.errors.length)) throw new Error('Resolve validation errors before exporting.');
+  if (validateRows(rows).some(row => row.errors.length)) throw new Error('Resolve validation errors before exporting.');
   // Formula-like data is blocked above. A leading + in a legitimate telephone is
   // retained for the CRM; use the dedicated spreadsheet-safe review download in Excel.
   return '\uFEFF' + Papa.unparse({ fields: COLUMNS, data: rows.map(row => COLUMNS.map(col => row.values[col])) }, {newline:'\r\n', quotes:true});

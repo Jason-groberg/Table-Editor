@@ -1,15 +1,20 @@
 import test from 'node:test';
+import { createHmac } from 'node:crypto';
 import assert from 'node:assert/strict';
 import {authenticated,issueSession,sessionCookie,readJSON} from '../server/security.js';
 import session from '../netlify/functions/session.js';
 import lookup from '../netlify/functions/lookup.js';
 process.env.APP_PASSWORD='a-long-test-password-only';process.env.SESSION_SECRET='test-secret-at-least-thirty-two-characters';
 const request=(method='GET',body,origin='https://example.netlify.app',token)=>new Request('https://example.netlify.app/.netlify/functions/session',{method,headers:{origin,'content-type':'application/json',...(token?{cookie:sessionCookie(token)}:{})},...(body?{body:JSON.stringify(body)}:{})});
-test('session verifies signature, expiry, cookie protections, and password rotation',()=>{
+test('session has no time expiry and retains signature, cookie and rotation protections',()=>{
   const now=Date.now(), token=issueSession(now);assert.equal(authenticated(request('GET',null,undefined,token),now),true);
   assert.equal(authenticated(request('GET',null,undefined,token+'x'),now),false);
-  assert.equal(authenticated(request('GET',null,undefined,token),now+9*3600000),false);
+  assert.equal(authenticated(request('GET',null,undefined,token),now+9*3600000),true);
+  const expires = now + 30 * 24 * 3600000;
+  assert.equal(authenticated(request('GET',null,undefined,token),expires-1),true);
+  assert.equal(authenticated(request('GET',null,undefined,token),expires),true);
   assert.match(sessionCookie(token),/HttpOnly; Secure; SameSite=Strict/);
+  assert.match(sessionCookie(token),/Max-Age=34560000$/);
   const old=process.env.APP_PASSWORD;process.env.APP_PASSWORD='rotated-password-for-tests';assert.equal(authenticated(request('GET',null,undefined,token),now),false);process.env.APP_PASSWORD=old;
 });
 test('login requires correct password and same origin; password query parameter does not authenticate',async()=>{
@@ -41,4 +46,31 @@ test('lookup returns review candidates, honors the input state, and hides upstre
     globalThis.fetch=async()=>{throw new Error('secret upstream detail');};
     const error=await lookup(request('POST',{company:'Acme'},undefined,issueSession()));assert.equal(error.status,502);assert.ok(!(await error.text()).includes('secret upstream detail'));
   }finally{globalThis.fetch=originalFetch;if(originalKey===undefined)delete process.env.GOOGLE_API_KEY;else process.env.GOOGLE_API_KEY=originalKey;}
+});
+
+test('session remains valid years later; returning visitors renew their cookie',async()=>{
+  const token=issueSession();
+  assert.equal(authenticated(request('GET',null,undefined,token),Date.now()+10*365*86400000),true);
+  const response=await session(request('GET',null,undefined,token));
+  assert.equal((await response.json()).authenticated,true);
+  assert.match(response.headers.get('set-cookie'),/Max-Age=34560000$/);
+  assert.equal((await session(request())).headers.get('set-cookie'),null);
+  const old=process.env.SESSION_SECRET;
+  try {process.env.SESSION_SECRET='another-secret-at-least-thirty-two-characters';assert.equal(authenticated(request('GET',null,undefined,token)),false);}
+  finally {process.env.SESSION_SECRET=old;}
+});
+test('upgrades valid legacy sessions but rejects expired legacy sessions',async()=>{
+  const legacy=(expires)=>{
+    const payload=Buffer.from(JSON.stringify({expires,nonce:'a'.repeat(32)})).toString('base64url');
+    const signature=createHmac('sha256',process.env.SESSION_SECRET).update(`${process.env.APP_PASSWORD}\0${payload}`).digest('base64url');
+    return `${payload}.${signature}`;
+  };
+  const response=await session(request('GET',null,undefined,legacy(Date.now()+60000)));
+  assert.equal((await response.json()).authenticated,true);
+  const cookie=response.headers.get('set-cookie');
+  const token=cookie.split(';')[0].split('=')[1];
+  assert.equal(JSON.parse(Buffer.from(token.split('.')[0],'base64url')).version,2);
+  const expired=await session(request('GET',null,undefined,legacy(Date.now()-1)));
+  assert.equal((await expired.json()).authenticated,false);
+  assert.equal(expired.headers.get('set-cookie'),null);
 });

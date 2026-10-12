@@ -1,6 +1,7 @@
 import { createHmac, createHash, timingSafeEqual, randomBytes } from 'node:crypto';
 const COOKIE = '__Host-lead_session';
-const TTL = 8 * 60 * 60;
+// Cookie retention is renewed on visits; the signed session has no app expiry.
+const COOKIE_MAX_AGE = 400 * 24 * 60 * 60;
 export function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', ...extra}});
 }
@@ -10,9 +11,9 @@ function signature(payload) {
   return createHmac('sha256', process.env.SESSION_SECRET).update(`${process.env.APP_PASSWORD}\0${payload}`).digest('base64url');
 }
 export function equal(a, b) { return timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest()); }
-export function issueSession(now = Date.now()) {
+export function issueSession() {
   if (!configured()) throw new Error('Authentication is not configured');
-  const payload = Buffer.from(JSON.stringify({expires: now + TTL * 1000, nonce:randomBytes(16).toString('hex')})).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({version: 2, nonce:randomBytes(16).toString('hex')})).toString('base64url');
   return `${payload}.${signature(payload)}`;
 }
 export function authenticated(request, now = Date.now()) {
@@ -23,10 +24,13 @@ export function authenticated(request, now = Date.now()) {
     const parts = cookie.split('.');
     if (parts.length !== 2 || !equal(parts[1], signature(parts[0]))) return false;
     const payload = JSON.parse(Buffer.from(parts[0], 'base64url'));
-    return Number.isFinite(payload.expires) && payload.expires > now && payload.expires <= now + TTL * 1000;
+    if (typeof payload.nonce !== 'string' || !/^[a-f0-9]{32}$/.test(payload.nonce)) return false;
+    if (payload.version === 2) return true;
+    // Upgrade still-valid legacy sessions on their next visit, never expired ones.
+    return payload.version === undefined && Number.isFinite(payload.expires) && payload.expires > now;
   } catch { return false; }
 }
-export const sessionCookie = token => `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${token ? TTL : 0}`;
+export const sessionCookie = token => `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${token ? COOKIE_MAX_AGE : 0}`;
 export function sameOrigin(request) { return request.headers.get('origin') === new URL(request.url).origin; }
 export async function readJSON(request) {
   if (!request.headers.get('content-type')?.startsWith('application/json')) throw new Error('Expected JSON');

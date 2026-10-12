@@ -2,7 +2,6 @@ import './style.css';
 import { COLUMNS, FULL_NAME, mapHeader, normalizeTable, validateRows, exportCSV, reviewCSV } from './processor.js';
 const $ = id => document.getElementById(id);
 let sheets = [], rows = [], page = 0, generation = 0, signedIn = false, busy = false;
-const required = new Set();
 function element(tag, content, className) { const el=document.createElement(tag); if(content!==undefined) el.textContent=content; if(className) el.className=className; return el; }
 function message(text='') { $('message').textContent=text; }
 function clearReview() { rows=[]; page=0; $('review').hidden=true; $('suggestions').hidden=true; $('suggestions').replaceChildren(); $('table').replaceChildren(); }
@@ -25,11 +24,6 @@ $('logout').addEventListener('click',async()=>{
   try {await api('session',{method:'DELETE'});authView(false);message('Signed out. Files have been cleared.');}
   catch(error){authView(false);message(`Files cleared. Sign-out could not be confirmed: ${error.message}`);}
 });
-for(const column of COLUMNS){
-  const label=element('label'); const input=element('input');input.type='checkbox';
-  input.addEventListener('change',()=>{input.checked?required.add(column):required.delete(column);renderRows();});
-  label.append(input,document.createTextNode(column));$('required').append(label);
-}
 function loadFile(file) {
   return new Promise((resolve,reject)=>{
     const worker=new Worker(new URL('./import-worker.js',import.meta.url),{type:'module'});
@@ -70,28 +64,27 @@ function renderMappings(){
     });details.append(grid);$('mappings').append(details);
   }
 }
-$('default-state').addEventListener('input',clearReview);
 $('process').addEventListener('click',()=>{
   clearReview();
   const selected=sheets.filter(sheet=>sheet.selected);
   if(!selected.length || selected.some(sheet=>!sheet.mapping.some(Boolean))){message('Select at least one sheet and map at least one column in each selected sheet.');return;}
-  rows=selected.flatMap(sheet=>normalizeTable(sheet.table,sheet.mapping,sheet.name,{defaultState:$('default-state').value}));
-  page=0;renderRows();message('Combined. Check required fields, review conflicts, and verify any business lookup suggestions.');
+  rows=selected.flatMap(sheet=>normalizeTable(sheet.table,sheet.mapping,sheet.name));
+  page=0;renderRows();message('Combined. Review conflicts, and verify any business lookup suggestions.');
 });
 function download(content,name){const url=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));const a=element('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-$('download').addEventListener('click',()=>{try{download(exportCSV(rows,[...required]),'hubspot_ready_leads.csv');}catch(error){message(error.message);}});
+$('download').addEventListener('click',()=>{try{download(exportCSV(rows),'hubspot_ready_leads.csv');}catch(error){message(error.message);}});
 $('review-download').addEventListener('click',()=>download(reviewCSV(rows),'lead_review_not_for_crm.csv'));
 $('issues-only').addEventListener('change',()=>{page=0;renderRows();});
 $('add-row').addEventListener('click',()=>{rows.push({values:Object.fromEntries(COLUMNS.map(key=>[key,key==='is doorpull'?'true':''])),source:'Manually added',conflicts:[]});page=Math.floor((rows.length-1)/50);$('issues-only').checked=false;renderRows();});
 $('prev').addEventListener('click',()=>{page--;renderRows();});$('next').addEventListener('click',()=>{page++;renderRows();});
 function updateStats(validation){
   const errors=validation.filter(v=>v.errors.length).length;const duplicates=validation.filter(v=>v.duplicate).length;
-  $('stats').textContent=`${rows.length} rows · ${errors} with errors · ${duplicates} possible duplicates · ${required.size} required fields`;
+  $('stats').textContent=`${rows.length} rows · ${errors} with errors · ${duplicates} possible duplicates`;
   $('download').disabled=!rows.length || errors>0;
 }
 function renderRows(){
   $('review').hidden=!rows.length;if(!rows.length)return;
-  const validation=validateRows(rows,[...required]);updateStats(validation);
+  const validation=validateRows(rows);updateStats(validation);
   const indexes=rows.map((_,i)=>i).filter(i=>!$('issues-only').checked || validation[i].errors.length || validation[i].duplicate);
   page=Math.min(Math.max(page,0),Math.max(0,Math.ceil(indexes.length/50)-1));
   $('page-label').textContent=`Page ${page+1} of ${Math.max(1,Math.ceil(indexes.length/50))} · ${indexes.length} matching rows`;
@@ -101,13 +94,13 @@ function renderRows(){
   for(const index of indexes.slice(page*50,(page+1)*50)){
     const row=rows[index];const tr=element('tr');const meta=element('td');meta.append(element('strong',`Row ${index+1}`),element('div',row.source,'source'));
     const issues=element('div',undefined,'issues');
-    const showIssues=()=>{const v=validateRows(rows,[...required])[index];issues.textContent=[...v.errors.map(e=>e.message),...(v.duplicate?[`Possible duplicate of row ${v.duplicate}. Review before export.`]:[])].join(' · ');};showIssues();meta.append(issues);
+    const showIssues=()=>{const v=validateRows(rows)[index];issues.textContent=[...v.errors.map(e=>e.message),...(v.duplicate?[`Possible duplicate of row ${v.duplicate}. Review before export.`]:[])].join(' · ');};showIssues();meta.append(issues);
     const lookup=element('button','Find business details');lookup.disabled=busy;lookup.addEventListener('click',()=>lookupRow(row));
     const remove=element('button','Remove');remove.addEventListener('click',()=>{rows.splice(index,1);$('suggestions').hidden=true;renderRows();});meta.append(lookup,remove);
     if(row.conflicts.length){const resolve=element('button','Accept displayed values');resolve.addEventListener('click',()=>{row.conflicts=[];renderRows();});meta.append(resolve);}
     tr.append(meta);
-    for(const column of COLUMNS){const td=element('td');const input=element('input');input.value=row.values[column];input.setAttribute('aria-label',`Row ${index+1}, ${column}`);input.setAttribute('aria-invalid',String(validation[index].errors.some(e=>e.field===column)));
-      input.addEventListener('input',()=>{row.values[column]=input.value.trim();row.conflicts=row.conflicts.filter(c=>c.field!==column);const current=validateRows(rows,[...required]);updateStats(current);showIssues();input.setAttribute('aria-invalid',String(current[index].errors.some(e=>e.field===column)));});td.append(input);tr.append(td);}
+    for(const column of COLUMNS){const td=element('td');const input=element('input');input.value=row.values[column];input.readOnly=column==='is doorpull';input.setAttribute('aria-label',`Row ${index+1}, ${column}`);input.setAttribute('aria-invalid',String(validation[index].errors.some(e=>e.field===column)));
+      input.addEventListener('input',()=>{row.values[column]=input.value.trim();row.conflicts=row.conflicts.filter(c=>c.field!==column);const current=validateRows(rows);updateStats(current);showIssues();input.setAttribute('aria-invalid',String(current[index].errors.some(e=>e.field===column)));});td.append(input);tr.append(td);}
     body.append(tr);
   }table.append(body);
 }

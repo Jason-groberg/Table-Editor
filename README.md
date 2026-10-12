@@ -36,7 +36,7 @@ Open `http://localhost:4173` (use localhost for the secure-cookie exception supp
 
 Use the **CRM CSV** for direct CRM upload. Use the separate **review copy** if opening the data in Excel: it neutralizes formula-leading characters, which may alter displayed values and should not be uploaded to the CRM.
 
-Sessions expire after eight hours. Rotating either auth secret invalidates all sessions. Signing out clears the browser cookie and in-memory batch; this stateless design does not revoke a previously stolen cookie until expiry or secret rotation. Shared-password access has no individual audit trail.
+Sign-in has no automatic app expiration. A persistent cookie is renewed for 400 days whenever the user returns to the app. Browsers may cap retention or clear cookies, so indefinite sign-in cannot be guaranteed after prolonged inactivity or in private browsing. Signing out, clearing cookies, or using a different browser requires signing in again. Still-valid older sessions are upgraded on the next visit; expired sessions require a fresh login. Rotating either auth secret invalidates all sessions. Signing out clears the browser cookie and in-memory batch; a copied session token remains valid until either authentication secret is rotated. Shared-password access has no individual audit trail. Remembering sign-in does not save uploaded files: reloading still clears the batch.
 
 Business suggestions are reviewed one row at a time, avoiding long serverless batch jobs. API errors never overwrite rows. Source files are processed in a worker and never uploaded; only explicitly requested business searches leave the browser.
 
@@ -45,3 +45,7 @@ Business suggestions are reviewed one row at a time, avoiding long serverless ba
 Run `npm audit` during updates; keep the lockfile current and rerun tests/build. The current dependency override is explained in the review document. Do not add real client files, `.env` files, API keys or exported CSVs to source control.
 
 Reference docs: [Netlify Functions](https://docs.netlify.com/build/functions/overview/), [Netlify rate limiting](https://docs.netlify.com/manage/security/secure-access-to-sites/rate-limiting/), [Google Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search).
+
+## Fixed import rules
+
+All 13 columns are always exported. `is doorpull` is fixed to `true` for every row, including when an input says otherwise. It is the only required field and is read-only in the editor. There is no required-field selector or default state. Missing contact and location fields stay blank unless supplied by the source, entered manually, or filled from an accepted business lookup. Failed lookups do not block exporting incomplete rows. Format, formula-safety and conflicting-value checks still apply to populated fields.
