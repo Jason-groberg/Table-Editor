@@ -9,7 +9,7 @@ These references identify the original Python implementation, which remains unch
 | Priority | Finding and impact | Original location | Netlify implementation |
 | --- | --- | --- | --- |
 | High | Password embedded in query strings and bookmark links. Anyone with that URL can log in; browser history and URL logs can retain the credential. | `app.py:22–25,49–51` | Server-side password verification; signed sessions without app expiration and renewable HttpOnly/Secure/SameSite cookies. No password URLs. Rotate the original password before cutover. |
-| High | First Google/search result is accepted without checking business identity. Wrong branch/company contact details can be imported. Scraper can select unrelated domains. | `google_client.py:33–38`; `scraper.py:28–35`; `data_processor.py:166–184` | Remove search scraping; show up to three Google matches with location and require explicit selection. Fill empty fields only. Business phone is labeled as a business number. |
+| High | First Google/search result is accepted without checking business identity. Wrong branch/company contact details can be imported. Scraper can select unrelated domains. | `google_client.py:33–38`; `scraper.py:28–35`; `data_processor.py:166–184` | Remove search scraping; automatically fill only a unique name/location match; retain up to three matches for manual review. Fill empty fields only. Business phone is labeled as a business number. |
 | High | No required-field validation or formula protection before export. Incomplete records reach the CRM; formula-like cells may execute when opened in spreadsheets. | `app.py:79–91` | Fixed true doorpull; other missing fields may remain blank. Format/conflict checks block CRM export. Formula-like inputs blocked, except numeric international phone strings. Separate formula-safe review download. |
 | Medium | CSV/Excel type inference drops leading zeros in ZIP/phone fields. Casting later cannot restore them. | `app.py:60–63`; `data_processor.py:131–134` | CSV remains text; Excel zero-padded number formats are preserved. Values already damaged in the source cannot be reconstructed. |
 | Medium | A last-name-only input has its last name overwritten with an empty string. | `data_processor.py:107–109` | Initialize fields independently; preserve supplied names. |
@@ -49,12 +49,12 @@ Original defaults: missing State → AZ; missing is doorpull → True. The migra
 
 - Browser-only table processing and editing. No server-side file storage, analytics or localStorage persistence. Reloading/signing out loses the batch.
 - Shared password protects server-side business lookup. Public static frontend files contain no credentials or lead data. Shared credentials do not provide individual attribution or per-person revocation.
-- Missing information is flagged, then entered manually or filled from an explicitly accepted Google business match. No individual email address is guessed. Automatic email-domain inference was removed because a contact's employer/domain may not identify the client company.
+- Missing business information is looked up on Combine, then filled from a unique name/location match or a manually accepted suggestion. No individual email address is guessed. Automatic email-domain inference was removed because a contact's employer/domain may not identify the client company.
 - `is doorpull` is fixed to true; all other fields are optional. Duplicate contacts are warnings and never silently merged/deleted. Conflicting mapped values block export until edited or explicitly accepted.
 - Dates must be real ISO `YYYY-MM-DD` dates. Excel date cells are converted; ambiguous text dates require review.
 - CSV is UTF-8 (optional BOM). XLSX is supported; XLS is not. First nonempty row must contain headers. Formula cells must be pasted as values first. Hidden worksheets are listed too; deselect any that do not belong in the import.
 - Limits: 20 files, 20 MB combined, 10 MB per file, 10,000 combined rows, 100 columns and 150,000 cells per sheet, 40 MB declared expanded ZIP content and 2,000 ZIP entries. Worker timeout: 30 seconds per file. Limits reduce resource abuse; parsing hostile files is still subject to browser memory limits.
-- Netlify lookup sends only the selected business/location to Google Places API (New), not the workbook, contact names or email addresses. Google configuration and paid API access remain to be verified.
+- Netlify lookup sends business names/locations needing enrichment on Combine to Google Places API (New), not the workbook, contact names or email addresses. Google configuration and paid API access remain to be verified.
 
 ## Verification
 

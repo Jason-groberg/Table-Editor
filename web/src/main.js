@@ -1,18 +1,29 @@
 import './style.css';
+import { enrichRows, lookupInput, fillMissing } from './enrichment.js';
 import { COLUMNS, FULL_NAME, mapHeader, normalizeTable, validateRows, exportCSV, reviewCSV } from './processor.js';
 const $ = id => document.getElementById(id);
 let sheets = [], rows = [], page = 0, generation = 0, signedIn = false, busy = false;
+let enrichmentController = null;
+function setEnriching(active) {
+  $('cancel-enrichment').hidden=!active;
+  $('process').disabled=active || !sheets.length;
+  $('add-row').disabled=active;
+  $('review-download').disabled=active;
+}
+
 function element(tag, content, className) { const el=document.createElement(tag); if(content!==undefined) el.textContent=content; if(className) el.className=className; return el; }
 function message(text='') { $('message').textContent=text; }
-function clearReview() { rows=[]; page=0; $('review').hidden=true; $('suggestions').hidden=true; $('suggestions').replaceChildren(); $('table').replaceChildren(); }
+function clearReview() { enrichmentController?.abort();enrichmentController=null;setEnriching(false);rows=[]; page=0; $('review').hidden=true; $('suggestions').hidden=true; $('suggestions').replaceChildren(); $('table').replaceChildren(); }
 function reset() { generation++; sheets=[]; clearReview(); $('files').value=''; $('mappings').replaceChildren(); $('process').disabled=true; }
 function authView(value) { signedIn=value; $('login').hidden=value; $('workspace').hidden=!value; $('logout').hidden=!value; if(!value) reset(); }
 async function api(path, options={}) {
   const response=await fetch(`/.netlify/functions/${path}`,{credentials:'same-origin',...options});
   let data;
-  try { data=await response.json(); } catch { throw new Error('The server is unavailable. Run with Netlify Dev locally, or use the deployed Netlify URL.'); }
+  try { data=await response.json(); } catch {
+    const error=new Error(response.status===429?'Too many requests. Waiting before retrying.':'The server is unavailable.');error.status=response.status;throw error;
+  }
   if(response.status===401) authView(false);
-  if(!response.ok) throw new Error(data.error || (response.status===429?'Too many requests. Wait a minute and retry.':'Request failed.'));
+  if(!response.ok) {const error=new Error(data.error || (response.status===429?'Too many requests. Wait a minute and retry.':'Request failed.'));error.status=response.status;throw error;}
   return data;
 }
 $('login-form').addEventListener('submit',async event=>{
@@ -64,12 +75,30 @@ function renderMappings(){
     });details.append(grid);$('mappings').append(details);
   }
 }
-$('process').addEventListener('click',()=>{
+$('cancel-enrichment').addEventListener('click',()=>enrichmentController?.abort());
+$('process').addEventListener('click',async()=>{
+  if(busy || enrichmentController)return;
   clearReview();
   const selected=sheets.filter(sheet=>sheet.selected);
   if(!selected.length || selected.some(sheet=>!sheet.mapping.some(Boolean))){message('Select at least one sheet and map at least one column in each selected sheet.');return;}
   rows=selected.flatMap(sheet=>normalizeTable(sheet.table,sheet.mapping,sheet.name));
-  page=0;renderRows();message('Combined. Review conflicts, and verify any business lookup suggestions.');
+  const batch=rows;
+  const controller=new AbortController();enrichmentController=controller;
+  setEnriching(true);page=0;renderRows();message(`Looking up missing business details: 0 of ${batch.length} rows…`);
+  try {
+    const result=await enrichRows(batch,(input,signal)=>api('lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal}),{
+      signal:controller.signal,
+      onProgress:progress=>{if(enrichmentController===controller)message(`Looking up missing business details: ${progress.processed} of ${batch.length} rows · ${progress.filled} fields filled.${progress.waiting?' Google lookup limit reached; retrying in about a minute.':''}`);}
+    });
+    if(enrichmentController!==controller || rows!==batch)return;
+    enrichmentController=null;setEnriching(false);renderRows();
+    const summary=`${result.cancelled?'Lookup stopped':'Combined'}: ${batch.length} rows · ${result.filled} fields filled · ${result.review} need match review · ${result.failed} lookups unavailable. Missing values remain blank.`;
+    if(!result.cancelled && batch.length && !validateRows(batch).some(row=>row.errors.length)){
+      download(exportCSV(batch),'hubspot_ready_leads.csv');
+      message(`${summary} Your CRM CSV is ready. If the download did not start, click Download CRM CSV.`);
+    }else message(`${summary} Review the table and use Download CRM CSV when ready.`);
+  }catch(error){if(enrichmentController===controller)message(`Could not finish lookups. Your combined rows are available for review. ${error.message}`);}
+  finally {if(enrichmentController===controller){enrichmentController=null;setEnriching(false);renderRows();}}
 });
 function download(content,name){const url=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));const a=element('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('download').addEventListener('click',()=>{try{download(exportCSV(rows),'hubspot_ready_leads.csv');}catch(error){message(error.message);}});
@@ -80,12 +109,12 @@ $('prev').addEventListener('click',()=>{page--;renderRows();});$('next').addEven
 function updateStats(validation){
   const errors=validation.filter(v=>v.errors.length).length;const duplicates=validation.filter(v=>v.duplicate).length;
   $('stats').textContent=`${rows.length} rows · ${errors} with errors · ${duplicates} possible duplicates`;
-  $('download').disabled=!rows.length || errors>0;
+  $('download').disabled=!!enrichmentController || !rows.length || errors>0;
 }
 function renderRows(){
   $('review').hidden=!rows.length;if(!rows.length)return;
   const validation=validateRows(rows);updateStats(validation);
-  const indexes=rows.map((_,i)=>i).filter(i=>!$('issues-only').checked || validation[i].errors.length || validation[i].duplicate);
+  const indexes=rows.map((_,i)=>i).filter(i=>!$('issues-only').checked || validation[i].errors.length || validation[i].duplicate || ['review','failed'].includes(rows[i].enrichment?.status));
   page=Math.min(Math.max(page,0),Math.max(0,Math.ceil(indexes.length/50)-1));
   $('page-label').textContent=`Page ${page+1} of ${Math.max(1,Math.ceil(indexes.length/50))} · ${indexes.length} matching rows`;
   $('prev').disabled=page===0;$('next').disabled=(page+1)*50>=indexes.length;
@@ -95,20 +124,26 @@ function renderRows(){
     const row=rows[index];const tr=element('tr');const meta=element('td');meta.append(element('strong',`Row ${index+1}`),element('div',row.source,'source'));
     const issues=element('div',undefined,'issues');
     const showIssues=()=>{const v=validateRows(rows)[index];issues.textContent=[...v.errors.map(e=>e.message),...(v.duplicate?[`Possible duplicate of row ${v.duplicate}. Review before export.`]:[])].join(' · ');};showIssues();meta.append(issues);
-    const lookup=element('button','Find business details');lookup.disabled=busy;lookup.addEventListener('click',()=>lookupRow(row));
-    const remove=element('button','Remove');remove.addEventListener('click',()=>{rows.splice(index,1);$('suggestions').hidden=true;renderRows();});meta.append(lookup,remove);
-    if(row.conflicts.length){const resolve=element('button','Accept displayed values');resolve.addEventListener('click',()=>{row.conflicts=[];renderRows();});meta.append(resolve);}
+    if(row.enrichment){
+      meta.append(element('div',row.enrichment.message,'source'));
+      const match=row.enrichment.candidate;
+      if(match && /^https:\/\/(?:www\.)?google\.com\//.test(match.maps || '')){const link=element('a','Google Maps source');link.href=match.maps;link.target='_blank';link.rel='noopener noreferrer';meta.append(link);}
+      for(const attribution of match?.attributions || [])meta.append(element('div',attribution.provider || '', 'source'));
+    }
+    const lookup=element('button','Find business details');lookup.disabled=busy || !!enrichmentController;lookup.addEventListener('click',()=>lookupRow(row));
+    const remove=element('button','Remove');remove.disabled=!!enrichmentController;remove.addEventListener('click',()=>{rows.splice(index,1);$('suggestions').hidden=true;renderRows();});meta.append(lookup,remove);
+    if(row.conflicts.length){const resolve=element('button','Accept displayed values');resolve.disabled=!!enrichmentController;resolve.addEventListener('click',()=>{row.conflicts=[];renderRows();});meta.append(resolve);}
     tr.append(meta);
-    for(const column of COLUMNS){const td=element('td');const input=element('input');input.value=row.values[column];input.readOnly=column==='is doorpull';input.setAttribute('aria-label',`Row ${index+1}, ${column}`);input.setAttribute('aria-invalid',String(validation[index].errors.some(e=>e.field===column)));
+    for(const column of COLUMNS){const td=element('td');const input=element('input');input.value=row.values[column];input.readOnly=column==='is doorpull' || !!enrichmentController;input.setAttribute('aria-label',`Row ${index+1}, ${column}`);input.setAttribute('aria-invalid',String(validation[index].errors.some(e=>e.field===column)));
       input.addEventListener('input',()=>{row.values[column]=input.value.trim();row.conflicts=row.conflicts.filter(c=>c.field!==column);const current=validateRows(rows);updateStats(current);showIssues();input.setAttribute('aria-invalid',String(current[index].errors.some(e=>e.field===column)));});td.append(input);tr.append(td);}
     body.append(tr);
   }table.append(body);
 }
 async function lookupRow(row){
-  if(busy)return;if(!row.values['company name']){message('Enter a company name before searching.');return;}
+  if(busy || enrichmentController)return;if(!row.values['company name']){message('Enter a company name before searching.');return;}
   busy=true;const current=generation;const snapshot=JSON.stringify(row.values);renderRows();message('Looking up business details…');$('suggestions').hidden=true;
   try {
-    const data=await api('lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:row.values['company name'],address:row.values.address,city:row.values.city,state:row.values.State,zip:row.values.zip})});
+    const data=await api('lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lookupInput(row))});
     if(!signedIn || generation!==current || !rows.includes(row))return;
     const panel=$('suggestions');panel.replaceChildren(element('h2',`Business matches for ${row.values['company name']}`),element('p','Check the business and location carefully. Accepting a match fills empty fields only. The phone is a business number, not a verified personal contact number.'));
     for(const candidate of data.candidates){
@@ -118,7 +153,7 @@ async function lookupRow(row){
       for(const attribution of candidate.attributions || [])card.append(element('p',attribution.provider || ''));
       const accept=element('button','Use this business · fill empty fields');accept.addEventListener('click',()=>{
         if(!rows.includes(row)||JSON.stringify(row.values)!==snapshot){message('This row changed after the search. Search again to confirm the latest details.');panel.hidden=true;return;}
-        for(const [key,value] of Object.entries(candidate.values))if(COLUMNS.includes(key)&&!row.values[key])row.values[key]=value;
+        fillMissing(row,candidate);row.enrichment={status:'matched',message:`Google Maps: ${candidate.name}; manually confirmed.`,candidate};
         panel.hidden=true;renderRows();message('Business details added. Review the completed row before exporting.');
       });card.append(element('br'),accept);panel.append(card);
     }

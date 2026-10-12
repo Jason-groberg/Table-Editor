@@ -38,7 +38,7 @@ Use the **CRM CSV** for direct CRM upload. Use the separate **review copy** if o
 
 Sign-in has no automatic app expiration. A persistent cookie is renewed for 400 days whenever the user returns to the app. Browsers may cap retention or clear cookies, so indefinite sign-in cannot be guaranteed after prolonged inactivity or in private browsing. Signing out, clearing cookies, or using a different browser requires signing in again. Still-valid older sessions are upgraded on the next visit; expired sessions require a fresh login. Rotating either auth secret invalidates all sessions. Signing out clears the browser cookie and in-memory batch; a copied session token remains valid until either authentication secret is rotated. Shared-password access has no individual audit trail. Remembering sign-in does not save uploaded files: reloading still clears the batch.
 
-Business suggestions are reviewed one row at a time, avoiding long serverless batch jobs. API errors never overwrite rows. Source files are processed in a worker and never uploaded; only explicitly requested business searches leave the browser.
+Combine automatically looks up missing business details through short, paced server requests. API errors never overwrite rows. Source files are processed in a worker and never uploaded; company names and locations needing enrichment are sent to Google Maps when Combine is pressed.
 
 ## Security maintenance
 
@@ -48,4 +48,16 @@ Reference docs: [Netlify Functions](https://docs.netlify.com/build/functions/ove
 
 ## Fixed import rules
 
-All 13 columns are always exported. `is doorpull` is fixed to `true` for every row, including when an input says otherwise. It is the only required field and is read-only in the editor. There is no required-field selector or default state. Missing contact and location fields stay blank unless supplied by the source, entered manually, or filled from an accepted business lookup. Failed lookups do not block exporting incomplete rows. Format, formula-safety and conflicting-value checks still apply to populated fields.
+All 13 columns are always exported. `is doorpull` is fixed to `true` for every row, including when an input says otherwise. It is the only required field and is read-only in the editor. There is no required-field selector or default state. Missing contact and location fields stay blank unless supplied by the source, entered manually, or filled from an automatic matched business lookup or a manually accepted suggestion. Failed lookups do not block exporting incomplete rows. Format, formula-safety and conflicting-value checks still apply to populated fields.
+
+## Automatic business enrichment
+
+Press **Combine & fill missing details** to normalize the files, look up missing business fields, and prepare a single CRM CSV. Successful batches automatically start a download; the download button remains available if the browser blocks automatic downloads or further edits are needed. Existing format and conflict errors still require correction before CRM export.
+
+Google Places can fill company domain, business phone, address, city, state and ZIP. It does not supply individual contact names, email addresses, contact owners or door-pull dates. Existing source values are never overwritten; unknown values remain blank and `is doorpull` remains true.
+
+Automatic matching requires exactly one candidate with the same normalized company name (ignoring common legal suffixes), matching all supplied location/domain fields, and at least one matching street, city, ZIP or domain. State alone does not establish a match. Ambiguous matches, company-name variations and address-format differences may require **Find business details** to review manually. Google source details appear beside automatically enriched rows and are excluded from CRM columns.
+
+Requests run sequentially at most about 19 per minute to respect the server's 20/minute per-IP limit. Duplicate company/location queries reuse results within the batch. A rate-limited call retries once after about a minute. Missing API configuration stops further network calls for that batch; temporary failures do not prevent subsequent rows from being processed. Large batches can take time: keep the tab open. **Stop lookup & review** cancels further work and retains completed enrichment. Changing files/mappings cancels the old batch and prevents late responses from changing the new batch.
+
+Verification: 27 automated tests passed, including automatic enrichment, source-value preservation, duplicate queries, incomplete exports, ambiguous matches, API errors, retries and cancellation. Google responses in automated tests are mocked; live API credentials still need verification on Netlify.
